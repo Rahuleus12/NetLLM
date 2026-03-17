@@ -1,0 +1,107 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# Build artifacts
+bin/
+dist/
+build/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Configuration files with sensitive data
+configs/config.local.yaml
+configs/config.*.local.yaml
+configs/secrets.yaml
+*.key
+*.pem
+*.crt
+
+# Log files
+*.log
+logs/
+/var/log/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Model files (large binary files)
+/models/
+*.bin
+*.gguf
+*.pt
+*.pth
+*.onnx
+*.h5
+*.pkl
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker volumes
+docker-volumes/
+
+# Coverage reports
+coverage.txt
+coverage.html
+coverage/
+
+# Profiling files
+*.prof
+*.pprof
+cpu.prof
+mem.prof
+
+# Generated documentation
+docs/generated/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+
+# Debug files
+debug
+__debug_bin
+
+# Air live reload files
+tmp/

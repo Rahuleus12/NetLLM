@@ -1,0 +1,331 @@
+version: '3.8'
+
+services:
+  # AI Provider Application
+  ai-provider:
+    build:
+      context: ../../
+      dockerfile: deployments/docker/Dockerfile
+    container_name: ai-provider
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "9090:9090"  # For debugging/metrics
+    environment:
+      # System configuration
+      - AI_PROVIDER_SYSTEM_HOST=0.0.0.0
+      - AI_PROVIDER_SYSTEM_PORT=8080
+      - AI_PROVIDER_SYSTEM_WORKERS=4
+
+      # Compute configuration
+      - AI_PROVIDER_COMPUTE_GPU_ENABLED=false
+      - AI_PROVIDER_COMPUTE_CPU_THREADS=8
+      - AI_PROVIDER_COMPUTE_MEMORY_LIMIT=16GB
+
+      # Database configuration
+      - AI_PROVIDER_STORAGE_DATABASE_HOST=postgres
+      - AI_PROVIDER_STORAGE_DATABASE_PORT=5432
+      - AI_PROVIDER_STORAGE_DATABASE_NAME=aiprovider
+      - AI_PROVIDER_STORAGE_DATABASE_USER=admin
+      - AI_PROVIDER_STORAGE_DATABASE_PASSWORD=secret
+      - AI_PROVIDER_STORAGE_DATABASE_SSLMODE=disable
+
+      # Redis configuration
+      - AI_PROVIDER_STORAGE_CACHE_HOST=redis
+      - AI_PROVIDER_STORAGE_CACHE_PORT=6379
+      - AI_PROVIDER_STORAGE_CACHE_PASSWORD=
+      - AI_PROVIDER_STORAGE_CACHE_DB=0
+
+      # API configuration
+      - AI_PROVIDER_API_RATE_LIMIT=100
+      - AI_PROVIDER_API_AUTH_ENABLED=false
+      - AI_PROVIDER_API_CORS_ORIGINS=["*"]
+
+      # Logging configuration
+      - AI_PROVIDER_LOGGING_LEVEL=INFO
+      - AI_PROVIDER_LOGGING_FORMAT=json
+
+      # Monitoring configuration
+      - AI_PROVIDER_MONITORING_PROMETHEUS_ENABLED=true
+      - AI_PROVIDER_MONITORING_METRICS_PATH=/metrics
+    volumes:
+      - ../../configs:/app/configs:ro
+      - ai-provider-logs:/var/log/ai-provider
+      - ai-provider-models:/models
+      - ai-provider-tmp:/tmp/ai-provider
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-provider-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-provider-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=aiprovider
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=secret
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --locale=C.UTF-8
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../../scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      - ai-provider-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d aiprovider"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: ai-provider-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    volumes:
+      - redis-data:/data
+    networks:
+      - ai-provider-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  # Prometheus Metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ai-provider-prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--storage.tsdb.retention.size=10GB'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - ai-provider-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ai-provider-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_INSTALL_PLUGINS=redis-datasource
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=redis-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - redis
+    networks:
+      - ai-provider-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Nginx Reverse Proxy (Optional - for production)
+  nginx:
+    image: nginx:alpine
+    container_name: ai-provider-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - ai-provider
+      - grafana
+    networks:
+      - ai-provider-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    profiles:
+      - production
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: ai-provider-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - ai-provider-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    profiles:
+      - monitoring
+
+  # cAdvisor for container metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: ai-provider-cadvisor
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    networks:
+      - ai-provider-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.2'
+          memory: 128M
+    profiles:
+      - monitoring
+
+networks:
+  ai-provider-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  ai-provider-logs:
+    driver: local
+  ai-provider-models:
+    driver: local
+  ai-provider-tmp:
+    driver: local

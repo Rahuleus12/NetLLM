@@ -1,0 +1,121 @@
+# Prometheus Configuration for AI Provider
+# This configuration defines scrape targets and alerting rules
+
+global:
+  scrape_interval: 15s      # Set the scrape interval to every 15 seconds
+  evaluation_interval: 15s  # Evaluate rules every 15 seconds
+  scrape_timeout: 10s       # Timeout for scrape requests
+
+  # External labels for federated Prometheus or remote storage
+  external_labels:
+    environment: 'development'
+    cluster: 'ai-provider-local'
+
+# Alertmanager configuration (optional - uncomment to enable)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+# rule_files:
+#   - "alert_rules.yml"
+#   - "recording_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: /metrics
+    scheme: http
+
+  # AI Provider Application
+  - job_name: 'ai-provider'
+    static_configs:
+      - targets: ['ai-provider:8080']
+    metrics_path: /metrics
+    scheme: http
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    honor_labels: true
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'ai-provider'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'ai-provider-api'
+
+  # Node Exporter - System metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'host-system'
+
+  # cAdvisor - Container metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    scheme: http
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'docker-containers'
+
+  # PostgreSQL Exporter (if available)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'postgresql-db'
+
+  # Redis Exporter (if available)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'redis-cache'
+
+  # Docker daemon metrics (if enabled)
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['docker-host:9323']
+    scrape_interval: 30s
+
+  # NVIDIA GPU metrics (if GPU is enabled)
+  - job_name: 'gpu'
+    static_configs:
+      - targets: ['gpu-exporter:9400']
+    scrape_interval: 15s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'gpu-node'
+
+# Remote write configuration (optional - for long-term storage)
+# remote_write:
+#   - url: "http://remote-storage:9090/api/v1/write"
+#     queue_config:
+#       max_samples_per_send: 1000
+#       max_shards: 200
+#       capacity: 2500
+
+# Remote read configuration (optional)
+# remote_read:
+#   - url: "http://remote-storage:9090/api/v1/read"
+#     read_recent: true

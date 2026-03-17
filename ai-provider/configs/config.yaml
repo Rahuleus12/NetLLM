@@ -1,0 +1,90 @@
+# AI Provider Configuration
+# Main configuration file for the Local AI Provider Application
+
+system:
+  host: 0.0.0.0
+  port: 8080
+  workers: 4
+  shutdown_timeout: 30s
+  read_timeout: 30s
+  write_timeout: 30s
+
+compute:
+  gpu_enabled: true
+  gpu_devices: [0]
+  cpu_threads: 8
+  memory_limit: 16GB
+  batch_size: 32
+
+models:
+  max_concurrent: 5
+  auto_scale: true
+  scale_threshold: 0.8
+  idle_timeout: 300s
+  registry_path: ./configs/models
+  download_path: /models
+  temp_path: /tmp/ai-provider
+
+storage:
+  models_path: /models
+  cache_size: 50GB
+  database:
+    type: postgres
+    host: postgres
+    port: 5432
+    name: aiprovider
+    user: admin
+    password: secret
+    sslmode: disable
+    max_connections: 20
+  cache:
+    type: redis
+    host: redis
+    port: 6379
+    password: ""
+    db: 0
+    pool_size: 10
+
+api:
+  rate_limit: 100
+  auth_enabled: true
+  cors_origins: ["*"]
+  jwt_secret: your-secret-key-change-in-production
+  api_key_header: X-API-Key
+  max_request_size: 10MB
+
+logging:
+  level: INFO
+  format: json
+  file: /var/log/ai-provider.log
+  max_size: 100MB
+  max_backups: 5
+  max_age: 30
+  compress: true
+  output_paths:
+    - stdout
+    - /var/log/ai-provider.log
+
+monitoring:
+  prometheus_enabled: true
+  metrics_interval: 15s
+  metrics_path: /metrics
+  health_check_path: /health
+  health_check_interval: 30s
+
+container:
+  runtime: docker
+  network: ai-provider-network
+  base_image: ai-provider-core:latest
+  model_template: model-{name}-{version}
+  resource_limits:
+    cpu: 2
+    memory: 4GB
+    gpu: 1
+
+security:
+  tls_enabled: false
+  cert_file: /etc/ssl/certs/server.crt
+  key_file: /etc/ssl/private/server.key
+  allowed_hosts: []
+  trusted_proxies: []
