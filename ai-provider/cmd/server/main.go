@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -12,6 +13,12 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/redis/go-redis/v9"
+
+	"ai-provider/internal/api/handlers"
+	"ai-provider/internal/config"
+	"ai-provider/internal/models"
+	"ai-provider/internal/storage"
 )
 
 // Version information (set via ldflags during build)
@@ -20,278 +27,6 @@ var (
 	BuildTime = "unknown"
 	GitCommit = "unknown"
 )
-
-// Config holds the server configuration
-type Config struct {
-	Host         string
-	Port         int
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-	IdleTimeout  time.Duration
-}
-
-// Server represents the AI Provider server
-type Server struct {
-	config *Config
-	router *mux.Router
-	server *http.Server
-}
-
-// NewServer creates a new server instance
-func NewServer(cfg *Config) *Server {
-	router := mux.NewRouter()
-
-	server := &http.Server{
-		Addr:         fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Handler:      router,
-		ReadTimeout:  cfg.ReadTimeout,
-		WriteTimeout: cfg.WriteTimeout,
-		IdleTimeout:  cfg.IdleTimeout,
-	}
-
-	return &Server{
-		config: cfg,
-		router: router,
-		server: server,
-	}
-}
-
-// setupRoutes configures all the routes for the server
-func (s *Server) setupRoutes() {
-	// Health check endpoint
-	s.router.HandleFunc("/health", s.healthHandler).Methods("GET")
-
-	// Readiness check endpoint
-	s.router.HandleFunc("/ready", s.readinessHandler).Methods("GET")
-
-	// Version endpoint
-	s.router.HandleFunc("/version", s.versionHandler).Methods("GET")
-
-	// API v1 routes
-	api := s.router.PathPrefix("/api/v1").Subrouter()
-
-	// Model management endpoints
-	api.HandleFunc("/models", s.listModelsHandler).Methods("GET")
-	api.HandleFunc("/models", s.uploadModelHandler).Methods("POST")
-	api.HandleFunc("/models/{id}", s.getModelHandler).Methods("GET")
-	api.HandleFunc("/models/{id}", s.deleteModelHandler).Methods("DELETE")
-
-	// Inference endpoints
-	api.HandleFunc("/inference", s.inferenceHandler).Methods("POST")
-	api.HandleFunc("/inference/stream", s.streamInferenceHandler).Methods("POST")
-
-	// Configuration endpoints
-	api.HandleFunc("/config", s.getConfigHandler).Methods("GET")
-	api.HandleFunc("/config", s.updateConfigHandler).Methods("PUT")
-
-	// Monitoring endpoints
-	api.HandleFunc("/metrics", s.metricsHandler).Methods("GET")
-	api.HandleFunc("/stats", s.statsHandler).Methods("GET")
-
-	// Apply middleware
-	s.router.Use(s.loggingMiddleware)
-	s.router.Use(s.corsMiddleware)
-	s.router.Use(s.recoveryMiddleware)
-}
-
-// healthHandler returns the health status of the server
-func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"healthy","timestamp":"%s"}`, time.Now().UTC().Format(time.RFC3339))
-}
-
-// readinessHandler returns the readiness status of the server
-func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: Check database connection
-	// TODO: Check model registry
-	// TODO: Check GPU availability
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"ready":true,"timestamp":"%s"}`, time.Now().UTC().Format(time.RFC3339))
-}
-
-// versionHandler returns version information
-func (s *Server) versionHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"version":"%s","build_time":"%s","git_commit":"%s"}`, Version, BuildTime, GitCommit)
-}
-
-// Placeholder handlers for Phase 1 - will be implemented in later phases
-func (s *Server) listModelsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"models":[],"message":"Model management will be implemented in Phase 2"}`)
-}
-
-func (s *Server) uploadModelHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	fmt.Fprintf(w, `{"error":"Model upload will be implemented in Phase 2"}`)
-}
-
-func (s *Server) getModelHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	modelID := vars["id"]
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	fmt.Fprintf(w, `{"error":"Model retrieval will be implemented in Phase 2","model_id":"%s"}`, modelID)
-}
-
-func (s *Server) deleteModelHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	modelID := vars["id"]
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	fmt.Fprintf(w, `{"error":"Model deletion will be implemented in Phase 2","model_id":"%s"}`, modelID)
-}
-
-func (s *Server) inferenceHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	fmt.Fprintf(w, `{"error":"Inference will be implemented in Phase 3"}`)
-}
-
-func (s *Server) streamInferenceHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	fmt.Fprintf(w, `{"error":"Streaming inference will be implemented in Phase 3"}`)
-}
-
-func (s *Server) getConfigHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"config":{},"message":"Configuration management will be implemented in Phase 1"}`)
-}
-
-func (s *Server) updateConfigHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	fmt.Fprintf(w, `{"error":"Configuration update will be implemented in Phase 1"}`)
-}
-
-func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"metrics":{},"message":"Metrics will be implemented in Phase 1"}`)
-}
-
-func (s *Server) statsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"stats":{},"message":"Statistics will be implemented in Phase 1"}`)
-}
-
-// loggingMiddleware logs all incoming requests
-func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-
-		// Create a custom response writer to capture status code
-		lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
-		next.ServeHTTP(lrw, r)
-
-		duration := time.Since(start)
-		log.Printf(
-			"[%s] %s %s %d %v",
-			r.Method,
-			r.RequestURI,
-			r.RemoteAddr,
-			lrw.statusCode,
-			duration,
-		)
-	})
-}
-
-// corsMiddleware handles CORS headers
-func (s *Server) corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-// recoveryMiddleware recovers from panics and returns a 500 error
-func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Printf("Panic recovered: %v", err)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintf(w, `{"error":"Internal server error"}`)
-			}
-		}()
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-// loggingResponseWriter wraps http.ResponseWriter to capture status code
-type loggingResponseWriter struct {
-	http.ResponseWriter
-	statusCode int
-}
-
-func (lrw *loggingResponseWriter) WriteHeader(code int) {
-	lrw.statusCode = code
-	lrw.ResponseWriter.WriteHeader(code)
-}
-
-// Start begins listening for requests
-func (s *Server) Start() error {
-	log.Printf("Starting AI Provider server on %s:%d", s.config.Host, s.config.Port)
-	log.Printf("Version: %s, Build: %s, Commit: %s", Version, BuildTime, GitCommit)
-
-	return s.server.ListenAndServe()
-}
-
-// Shutdown gracefully shuts down the server
-func (s *Server) Shutdown(ctx context.Context) error {
-	log.Println("Shutting down server gracefully...")
-	return s.server.Shutdown(ctx)
-}
-
-// loadConfig loads configuration from environment variables and defaults
-func loadConfig() *Config {
-	return &Config{
-		Host:         getEnv("AI_PROVIDER_HOST", "0.0.0.0"),
-		Port:         getEnvAsInt("AI_PROVIDER_PORT", 8080),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
-}
-
-// getEnv gets environment variable with default value
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-// getEnvAsInt gets environment variable as integer with default value
-func getEnvAsInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		var intValue int
-		if _, err := fmt.Sscanf(value, "%d", &intValue); err == nil {
-			return intValue
-		}
-	}
-	return defaultValue
-}
 
 func main() {
 	// Parse command-line flags
@@ -307,24 +42,86 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Load configuration
-	cfg := loadConfig()
+	log.Printf("Starting AI Provider v%s", Version)
 
-	// Log if config file was specified (will be used in future implementation)
-	if *configFile != "" {
-		log.Printf("Config file specified: %s (will be implemented in future)", *configFile)
+	// Load configuration
+	cfg, err := loadConfig(*configFile)
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Create server instance
-	server := NewServer(cfg)
+	// Initialize database
+	db, err := initializeDatabase(cfg)
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
 
-	// Setup routes
-	server.setupRoutes()
+	// Initialize Redis cache
+	cache, err := initializeCache(cfg)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize cache: %v", err)
+		// Continue without cache
+	}
+
+	// Initialize model registry
+	registry := models.NewRegistry(db, cache)
+
+	// Initialize download manager
+	downloadConfig := models.DownloadConfig{
+		MaxThreads:       4,
+		ChunkSize:        10 * 1024 * 1024, // 10MB
+		Timeout:          30 * time.Minute,
+		RetryAttempts:    3,
+		RetryDelay:       5 * time.Second,
+		ResumeEnabled:    true,
+		ProgressInterval: 1 * time.Second,
+	}
+	downloadMgr := models.NewDownloadManager(registry, downloadConfig)
+
+	// Initialize model manager
+	managerConfig := &models.ManagerConfig{
+		MaxConcurrentDownloads: 3,
+		AutoValidate:           true,
+		AutoActivate:           false,
+		DownloadTimeout:        30 * time.Minute,
+		ValidationTimeout:      5 * time.Minute,
+		ModelStoragePath:       cfg.Storage.ModelsPath,
+		TempPath:               "/tmp/ai-provider",
+	}
+	manager := models.NewModelManager(registry, downloadMgr, managerConfig)
+
+	// Initialize API handlers
+	handlerConfig := &handlers.Config{
+		Manager: manager,
+	}
+	modelHandlers := handlers.NewModelHandlers(handlerConfig)
+
+	// Setup HTTP server
+	router := mux.NewRouter()
+
+	// Register routes
+	setupRoutes(router, modelHandlers)
+
+	// Apply middleware
+	router.Use(loggingMiddleware)
+	router.Use(corsMiddleware)
+	router.Use(recoveryMiddleware)
+
+	// Create HTTP server
+	srv := &http.Server{
+		Addr:         fmt.Sprintf("%s:%d", cfg.System.Host, cfg.System.Port),
+		Handler:      router,
+		ReadTimeout:  cfg.System.ReadTimeout,
+		WriteTimeout: cfg.System.WriteTimeout,
+		IdleTimeout:  cfg.System.IdleTimeout,
+	}
 
 	// Start server in a goroutine
 	go func() {
-		if err := server.Start(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+		log.Printf("Server starting on %s", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
 
@@ -333,14 +130,160 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
+	log.Println("Shutting down server...")
+
 	// Give outstanding requests 30 seconds to complete
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Shutdown server
-	if err := server.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
 	log.Println("Server exited")
+}
+
+func loadConfig(configPath string) (*config.Config, error) {
+	configManager := config.NewManager()
+
+	if err := configManager.Load(configPath); err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	return configManager.Get(), nil
+}
+
+func initializeDatabase(cfg *config.Config) (*sql.DB, error) {
+	dbConfig := &storage.DatabaseConfig{
+		Host:           cfg.Storage.Database.Host,
+		Port:           cfg.Storage.Database.Port,
+		Name:           cfg.Storage.Database.Name,
+		User:           cfg.Storage.Database.User,
+		Password:       cfg.Storage.Database.Password,
+		SSLMode:        cfg.Storage.Database.SSLMode,
+		MaxConnections: cfg.Storage.Database.MaxConnections,
+	}
+
+	db := storage.NewDatabase(dbConfig)
+	if err := db.Connect(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	if err := db.InitializeSchema(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to initialize database schema: %w", err)
+	}
+
+	return db.GetDB(), nil
+}
+
+func initializeCache(cfg *config.Config) (*redis.Client, error) {
+	cacheConfig := &storage.CacheConfig{
+		Host:     cfg.Storage.Cache.Host,
+		Port:     cfg.Storage.Cache.Port,
+		Password: cfg.Storage.Cache.Password,
+		DB:       cfg.Storage.Cache.DB,
+		PoolSize: cfg.Storage.Cache.PoolSize,
+	}
+
+	cache := storage.NewCache(cacheConfig)
+	if err := cache.Connect(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to connect to cache: %w", err)
+	}
+
+	return cache.GetClient(), nil
+}
+
+func setupRoutes(router *mux.Router, handlers *handlers.ModelHandlers) {
+	// Health endpoints
+	router.HandleFunc("/health", handlers.HealthCheck).Methods("GET")
+	router.HandleFunc("/ready", handlers.ReadinessCheck).Methods("GET")
+	router.HandleFunc("/version", VersionHandler).Methods("GET")
+
+	// API v1 routes
+	api := router.PathPrefix("/api/v1").Subrouter()
+
+	// Model management
+	api.HandleFunc("/models", handlers.ListModels).Methods("GET")
+	api.HandleFunc("/models", handlers.RegisterModel).Methods("POST")
+	api.HandleFunc("/models/{id}", handlers.GetModel).Methods("GET")
+	api.HandleFunc("/models/{id}", handlers.UpdateModel).Methods("PUT")
+	api.HandleFunc("/models/{id}", handlers.DeleteModel).Methods("DELETE")
+
+	// Model operations
+	api.HandleFunc("/models/{id}/download", handlers.StartDownload).Methods("POST")
+	api.HandleFunc("/models/{id}/download", handlers.CancelDownload).Methods("DELETE")
+	api.HandleFunc("/models/{id}/progress", handlers.GetDownloadProgress).Methods("GET")
+	api.HandleFunc("/models/{id}/validate", handlers.ValidateModel).Methods("POST")
+	api.HandleFunc("/models/{id}/activate", handlers.ActivateModel).Methods("POST")
+	api.HandleFunc("/models/{id}/deactivate", handlers.DeactivateModel).Methods("POST")
+
+	// Model configuration
+	api.HandleFunc("/models/{id}/config", handlers.GetModelConfig).Methods("GET")
+	api.HandleFunc("/models/{id}/config", handlers.UpdateModelConfig).Methods("PUT")
+
+	// Model versions
+	api.HandleFunc("/models/{id}/versions", handlers.ListVersions).Methods("GET")
+	api.HandleFunc("/models/{id}/versions", handlers.CreateVersion).Methods("POST")
+
+	// Model statistics
+	api.HandleFunc("/models/stats", handlers.GetModelStats).Methods("GET")
+}
+
+func VersionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"version":"%s","build_time":"%s","git_commit":"%s"}`, Version, BuildTime, GitCommit)
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		// Create a custom response writer to capture status code
+		lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+		next.ServeHTTP(lrw, r)
+
+		duration := time.Since(start)
+		log.Printf("[%s] %s %s %d %v", r.Method, r.RequestURI, r.RemoteAddr, lrw.statusCode, duration)
+	})
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("Panic recovered: %v", err)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, `{"error":"internal server error"}`)
+			}
+		}()
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.statusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
 }
