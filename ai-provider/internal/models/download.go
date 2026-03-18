@@ -16,37 +16,6 @@ import (
 	"time"
 )
 
-// DownloadStatus represents the status of a download
-type DownloadStatus string
-
-const (
-	DownloadPending   DownloadStatus = "pending"
-	DownloadRunning   DownloadStatus = "running"
-	DownloadPaused    DownloadStatus = "paused"
-	DownloadCompleted DownloadStatus = "completed"
-	DownloadFailed    DownloadStatus = "failed"
-	DownloadCancelled DownloadStatus = "cancelled"
-)
-
-// DownloadProgress represents the progress of a model download
-type DownloadProgress struct {
-	ModelID          string         `json:"model_id"`
-	Status           DownloadStatus `json:"status"`
-	Percentage       float64        `json:"percentage"`
-	BytesDownloaded  int64          `json:"bytes_downloaded"`
-	TotalBytes       int64          `json:"total_bytes"`
-	SpeedMbps        float64        `json:"speed_mbps"`
-	ETARemaining     int            `json:"eta_seconds"`
-	SpeedBytesPerSec float64        `json:"speed_bytes_per_sec"`
-	StartedAt        time.Time      `json:"started_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
-	CompletedAt      *time.Time     `json:"completed_at,omitempty"`
-	Error            string         `json:"error,omitempty"`
-	ChunkSize        int64          `json:"chunk_size"`
-	Threads          int            `json:"threads"`
-	Resumable        bool           `json:"resumable"`
-}
-
 // DownloadConfig represents download configuration
 type DownloadConfig struct {
 	MaxThreads       int           `json:"max_threads"`
@@ -357,11 +326,12 @@ func (dm *DownloadManager) performDownload(ctx context.Context, req *DownloadReq
 
 		n, err := resp.Body.Read(buffer)
 		if n > 0 {
-			written, err = file.Write(buffer[:n])
-			if err != nil {
-				return fmt.Errorf("failed to write file: %w", err)
+			w, writeErr := file.Write(buffer[:n])
+			if writeErr != nil {
+				return fmt.Errorf("failed to write file: %w", writeErr)
 			}
-			tracker.Write(written)
+			written += int64(w)
+			tracker.Write(buffer[:n])
 		}
 
 		if err != nil {

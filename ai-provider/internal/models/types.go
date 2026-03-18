@@ -167,10 +167,14 @@ type DownloadProgress struct {
 	StartedAt        time.Time      `json:"started_at" db:"started_at"`
 	UpdatedAt        time.Time      `json:"updated_at" db:"updated_at"`
 	CompletedAt      *time.Time     `json:"completed_at" db:"completed_at"`
-	Error           string         `json:"error,omitempty" db:"error"`
-	RetryCount      int            `json:"retry_count" db:"retry_count"`
-	CurrentSpeed    float64        `json:"current_speed" db:"current_speed"`
-	AverageSpeed    float64        `json:"average_speed" db:"average_speed"`
+	Error            string         `json:"error,omitempty" db:"error"`
+	RetryCount       int            `json:"retry_count" db:"retry_count"`
+	CurrentSpeed     float64        `json:"current_speed" db:"current_speed"`
+	AverageSpeed     float64        `json:"average_speed" db:"average_speed"`
+	SpeedBytesPerSec float64        `json:"speed_bytes_per_sec" db:"speed_bytes_per_sec"`
+	ChunkSize        int64          `json:"chunk_size" db:"chunk_size"`
+	Threads          int            `json:"threads" db:"threads"`
+	Resumable        bool           `json:"resumable" db:"resumable"`
 }
 
 // ValidationResult contains the results of model validation

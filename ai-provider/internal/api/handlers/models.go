@@ -2,13 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/ai-provider/internal/models"
 	"github.com/gorilla/mux"
-	"ai-provider/internal/models"
 )
 
 // ModelHandlers handles model-related API requests
@@ -358,8 +357,8 @@ func (h *ModelHandlers) SearchModels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetModelVersions handles GET /api/v1/models/{id}/versions
-func (h *ModelHandlers) GetModelVersions(w http.ResponseWriter, r *http.Request) {
+// GetModelConfig handles GET /api/v1/models/{id}/config
+func (h *ModelHandlers) GetModelConfig(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	modelID := vars["id"]
 
@@ -368,8 +367,129 @@ func (h *ModelHandlers) GetModelVersions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// TODO: Implement version listing
-	h.respondError(w, http.StatusNotImplemented, "version listing not yet implemented", nil)
+	model, err := h.manager.GetModel(r.Context(), modelID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.respondError(w, http.StatusNotFound, "model not found", err)
+			return
+		}
+		h.respondError(w, http.StatusInternalServerError, "failed to get model config", err)
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, model.Config)
+}
+
+// UpdateModelConfig handles PUT /api/v1/models/{id}/config
+func (h *ModelHandlers) UpdateModelConfig(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	modelID := vars["id"]
+
+	if modelID == "" {
+		h.respondError(w, http.StatusBadRequest, "model ID is required", nil)
+		return
+	}
+
+	var config models.ModelConfig
+	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+		h.respondError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+
+	// Get existing model
+	model, err := h.manager.GetModel(r.Context(), modelID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.respondError(w, http.StatusNotFound, "model not found", err)
+			return
+		}
+		h.respondError(w, http.StatusInternalServerError, "failed to get model", err)
+		return
+	}
+
+	// Update config
+	model.Config = config
+
+	// Use UpdateModel to save changes
+	updateReq := &models.UpdateModelRequest{
+		Config: &config,
+	}
+
+	updatedModel, err := h.manager.UpdateModel(r.Context(), modelID, updateReq)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "failed to update model config", err)
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, updatedModel.Config)
+}
+
+// ListVersions handles GET /api/v1/models/{id}/versions
+func (h *ModelHandlers) ListVersions(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	modelID := vars["id"]
+
+	if modelID == "" {
+		h.respondError(w, http.StatusBadRequest, "model ID is required", nil)
+		return
+	}
+
+	// Get the model first to get its name
+	model, err := h.manager.GetModel(r.Context(), modelID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.respondError(w, http.StatusNotFound, "model not found", err)
+			return
+		}
+		h.respondError(w, http.StatusInternalServerError, "failed to get model", err)
+		return
+	}
+
+	// Get all versions of this model
+	versions, err := h.manager.GetModelVersions(r.Context(), model.Name)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "failed to list versions", err)
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"data":   versions,
+		"count":  len(versions),
+		"model_id": modelID,
+	})
+}
+
+// CreateVersion handles POST /api/v1/models/{id}/versions
+func (h *ModelHandlers) CreateVersion(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	modelID := vars["id"]
+
+	if modelID == "" {
+		h.respondError(w, http.StatusBadRequest, "model ID is required", nil)
+		return
+	}
+
+	var req struct {
+		Version     string                 `json:"version"`
+		SourceURL   string                 `json:"source_url"`
+		Checksum    string                 `json:"checksum"`
+		Changelog   string                 `json:"changelog"`
+		CreatedBy   string                 `json:"created_by"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.respondError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+
+	if req.Version == "" {
+		h.respondError(w, http.StatusBadRequest, "version is required", nil)
+		return
+	}
+
+	// TODO: Implement version creation through VersionManager
+	// For now, return not implemented
+	h.respondError(w, http.StatusNotImplemented, "version creation not yet implemented - requires VersionManager integration", nil)
 }
 
 // Helper functions
@@ -423,5 +543,5 @@ func (h *ModelHandlers) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/api/v1/models/{id}/deactivate", h.DeactivateModel).Methods("POST")
 
 	// Version routes
-	router.HandleFunc("/api/v1/models/{id}/versions", h.GetModelVersions).Methods("GET")
+	router.HandleFunc("/api/v1/models/{id}/versions", h.ListVersions).Methods("GET")
 }

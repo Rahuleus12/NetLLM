@@ -6,110 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
-
-// ModelFormat represents the format of a model file
-type ModelFormat string
-
-const (
-	FormatGGUF       ModelFormat = "gguf"
-	FormatONNX       ModelFormat = "onnx"
-	FormatPyTorch    ModelFormat = "pytorch"
-	FormatTensorFlow ModelFormat = "tensorflow"
-	FormatSafeTensors ModelFormat = "safetensors"
-)
-
-// ModelStatus represents the current status of a model
-type ModelStatus string
-
-const (
-	StatusInactive    ModelStatus = "inactive"
-	StatusDownloading  ModelStatus = "downloading"
-	StatusValidating   ModelStatus = "validating"
-	StatusLoading      ModelStatus = "loading"
-	StatusActive       ModelStatus = "active"
-	StatusError        ModelStatus = "error"
-	StatusDeprecated   ModelStatus = "deprecated"
-)
-
-// Model represents an AI model in the registry
-type Model struct {
-	ID           string                 `json:"id"`
-	Name         string                 `json:"name"`
-	Version      string                 `json:"version"`
-	Description  string                 `json:"description"`
-	Format       ModelFormat            `json:"format"`
-	Status       ModelStatus            `json:"status"`
-	Source       ModelSource            `json:"source"`
-	FileInfo     ModelFileInfo          `json:"file_info"`
-	Config       ModelConfig            `json:"config"`
-	Requirements ModelRequirements      `json:"requirements"`
-	Tags         []string               `json:"tags"`
-	Metadata     map[string]interface{} `json:"metadata"`
-	CreatedAt    time.Time              `json:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at"`
-	CreatedBy    string                 `json:"created_by"`
-}
-
-// ModelSource represents the source of a model
-type ModelSource struct {
-	Type     string `json:"type"`     // url, s3, huggingface, local
-	URL      string `json:"url"`
-	Checksum string `json:"checksum"`
-	Username string `json:"username,omitempty"`
-	Password string `json:"-"`        // Sensitive, not exposed in JSON
-	Region   string `json:"region,omitempty"`   // For S3
-	Bucket   string `json:"bucket,omitempty"`   // For S3
-	Key      string `json:"key,omitempty"`      // For S3
-}
-
-// ModelFileInfo contains information about the model file
-type ModelFileInfo struct {
-	Path             string    `json:"path"`
-	SizeBytes        int64     `json:"size_bytes"`
-	ChecksumVerified bool      `json:"checksum_verified"`
-	LastVerified     time.Time `json:"last_verified"`
-	LastAccessed     time.Time `json:"last_accessed"`
-}
-
-// ModelConfig represents model-specific configuration
-type ModelConfig struct {
-	ContextLength    int                    `json:"context_length"`
-	Temperature      float64                `json:"temperature"`
-	MaxTokens        int                    `json:"max_tokens"`
-	TopP            float64                `json:"top_p"`
-	TopK            int                    `json:"top_k"`
-	StopTokens      []string               `json:"stop_tokens"`
-	FrequencyPenalty float64               `json:"frequency_penalty"`
-	PresencePenalty  float64               `json:"presence_penalty"`
-	CustomParams     map[string]interface{} `json:"custom_params"`
-}
-
-// ModelRequirements specifies the resource requirements for a model
-type ModelRequirements struct {
-	RAMMin      int  `json:"ram_min"`      // MB
-	GPUMemory   int  `json:"gpu_memory"`   // MB
-	CPUCores    int  `json:"cpu_cores"`
-	GPURequired bool `json:"gpu_required"`
-	GPUCount    int  `json:"gpu_count"`
-}
-
-// ModelFilter represents filtering options for listing models
-type ModelFilter struct {
-	Page      int          `json:"page"`
-	PerPage   int          `json:"per_page"`
-	Status    ModelStatus  `json:"status"`
-	Format    ModelFormat  `json:"format"`
-	Search    string       `json:"search"`
-	Tags      []string     `json:"tags"`
-	SortBy    string       `json:"sort_by"`
-	SortOrder string       `json:"sort_order"`
-}
 
 // ModelListResult represents the result of a model list operation
 type ModelListResult struct {

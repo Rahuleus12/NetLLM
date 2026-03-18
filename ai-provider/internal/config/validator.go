@@ -42,134 +42,7 @@ type Validator struct {
 	config *Config
 }
 
-// Config represents the complete application configuration
-type Config struct {
-	System     SystemConfig     `yaml:"system" mapstructure:"system"`
-	Compute    ComputeConfig    `yaml:"compute" mapstructure:"compute"`
-	Models     ModelsConfig     `yaml:"models" mapstructure:"models"`
-	Storage    StorageConfig    `yaml:"storage" mapstructure:"storage"`
-	API        APIConfig        `yaml:"api" mapstructure:"api"`
-	Logging    LoggingConfig    `yaml:"logging" mapstructure:"logging"`
-	Monitoring MonitoringConfig `yaml:"monitoring" mapstructure:"monitoring"`
-	Container  ContainerConfig  `yaml:"container" mapstructure:"container"`
-	Security   SecurityConfig   `yaml:"security" mapstructure:"security"`
-}
-
-// SystemConfig holds system-level configuration
-type SystemConfig struct {
-	Host            string        `yaml:"host" mapstructure:"host"`
-	Port            int           `yaml:"port" mapstructure:"port"`
-	Workers         int           `yaml:"workers" mapstructure:"workers"`
-	ShutdownTimeout time.Duration `yaml:"shutdown_timeout" mapstructure:"shutdown_timeout"`
-	ReadTimeout     time.Duration `yaml:"read_timeout" mapstructure:"read_timeout"`
-	WriteTimeout    time.Duration `yaml:"write_timeout" mapstructure:"write_timeout"`
-}
-
-// ComputeConfig holds compute resource configuration
-type ComputeConfig struct {
-	GPUEnabled  bool     `yaml:"gpu_enabled" mapstructure:"gpu_enabled"`
-	GPUDevices  []int    `yaml:"gpu_devices" mapstructure:"gpu_devices"`
-	CPUThreads  int      `yaml:"cpu_threads" mapstructure:"cpu_threads"`
-	MemoryLimit string   `yaml:"memory_limit" mapstructure:"memory_limit"`
-	BatchSize   int      `yaml:"batch_size" mapstructure:"batch_size"`
-}
-
-// ModelsConfig holds model management configuration
-type ModelsConfig struct {
-	MaxConcurrent  int           `yaml:"max_concurrent" mapstructure:"max_concurrent"`
-	AutoScale      bool          `yaml:"auto_scale" mapstructure:"auto_scale"`
-	ScaleThreshold float64       `yaml:"scale_threshold" mapstructure:"scale_threshold"`
-	IdleTimeout    time.Duration `yaml:"idle_timeout" mapstructure:"idle_timeout"`
-	RegistryPath   string        `yaml:"registry_path" mapstructure:"registry_path"`
-	DownloadPath   string        `yaml:"download_path" mapstructure:"download_path"`
-	TempPath       string        `yaml:"temp_path" mapstructure:"temp_path"`
-}
-
-// StorageConfig holds storage configuration
-type StorageConfig struct {
-	ModelsPath string        `yaml:"models_path" mapstructure:"models_path"`
-	CacheSize  string        `yaml:"cache_size" mapstructure:"cache_size"`
-	Database   DatabaseConfig `yaml:"database" mapstructure:"database"`
-	Cache      CacheConfig   `yaml:"cache" mapstructure:"cache"`
-}
-
-// DatabaseConfig holds database configuration
-type DatabaseConfig struct {
-	Type           string `yaml:"type" mapstructure:"type"`
-	Host           string `yaml:"host" mapstructure:"host"`
-	Port           int    `yaml:"port" mapstructure:"port"`
-	Name           string `yaml:"name" mapstructure:"name"`
-	User           string `yaml:"user" mapstructure:"user"`
-	Password       string `yaml:"password" mapstructure:"password"`
-	SSLMode        string `yaml:"sslmode" mapstructure:"sslmode"`
-	MaxConnections int    `yaml:"max_connections" mapstructure:"max_connections"`
-}
-
-// CacheConfig holds cache configuration
-type CacheConfig struct {
-	Type     string `yaml:"type" mapstructure:"type"`
-	Host     string `yaml:"host" mapstructure:"host"`
-	Port     int    `yaml:"port" mapstructure:"port"`
-	Password string `yaml:"password" mapstructure:"password"`
-	DB       int    `yaml:"db" mapstructure:"db"`
-	PoolSize int    `yaml:"pool_size" mapstructure:"pool_size"`
-}
-
-// APIConfig holds API configuration
-type APIConfig struct {
-	RateLimit      int      `yaml:"rate_limit" mapstructure:"rate_limit"`
-	AuthEnabled    bool     `yaml:"auth_enabled" mapstructure:"auth_enabled"`
-	CORSOrigins    []string `yaml:"cors_origins" mapstructure:"cors_origins"`
-	JWTSecret      string   `yaml:"jwt_secret" mapstructure:"jwt_secret"`
-	APIKeyHeader   string   `yaml:"api_key_header" mapstructure:"api_key_header"`
-	MaxRequestSize string   `yaml:"max_request_size" mapstructure:"max_request_size"`
-}
-
-// LoggingConfig holds logging configuration
-type LoggingConfig struct {
-	Level       string   `yaml:"level" mapstructure:"level"`
-	Format      string   `yaml:"format" mapstructure:"format"`
-	File        string   `yaml:"file" mapstructure:"file"`
-	MaxSize     string   `yaml:"max_size" mapstructure:"max_size"`
-	MaxBackups  int      `yaml:"max_backups" mapstructure:"max_backups"`
-	MaxAge      int      `yaml:"max_age" mapstructure:"max_age"`
-	Compress    bool     `yaml:"compress" mapstructure:"compress"`
-	OutputPaths []string `yaml:"output_paths" mapstructure:"output_paths"`
-}
-
-// MonitoringConfig holds monitoring configuration
-type MonitoringConfig struct {
-	PrometheusEnabled   bool          `yaml:"prometheus_enabled" mapstructure:"prometheus_enabled"`
-	MetricsInterval     time.Duration `yaml:"metrics_interval" mapstructure:"metrics_interval"`
-	MetricsPath         string        `yaml:"metrics_path" mapstructure:"metrics_path"`
-	HealthCheckPath     string        `yaml:"health_check_path" mapstructure:"health_check_path"`
-	HealthCheckInterval time.Duration `yaml:"health_check_interval" mapstructure:"health_check_interval"`
-}
-
-// ContainerConfig holds container runtime configuration
-type ContainerConfig struct {
-	Runtime       string            `yaml:"runtime" mapstructure:"runtime"`
-	Network       string            `yaml:"network" mapstructure:"network"`
-	BaseImage     string            `yaml:"base_image" mapstructure:"base_image"`
-	ModelTemplate string            `yaml:"model_template" mapstructure:"model_template"`
-	ResourceLimits ResourceLimitsConfig `yaml:"resource_limits" mapstructure:"resource_limits"`
-}
-
-// ResourceLimitsConfig holds resource limit configuration
-type ResourceLimitsConfig struct {
-	CPU    int    `yaml:"cpu" mapstructure:"cpu"`
-	Memory string `yaml:"memory" mapstructure:"memory"`
-	GPU    int    `yaml:"gpu" mapstructure:"gpu"`
-}
-
-// SecurityConfig holds security configuration
-type SecurityConfig struct {
-	TLSEnabled    bool     `yaml:"tls_enabled" mapstructure:"tls_enabled"`
-	CertFile      string   `yaml:"cert_file" mapstructure:"cert_file"`
-	KeyFile       string   `yaml:"key_file" mapstructure:"key_file"`
-	AllowedHosts  []string `yaml:"allowed_hosts" mapstructure:"allowed_hosts"`
-	TrustedProxies []string `yaml:"trusted_proxies" mapstructure:"trusted_proxies"`
-}
+// Config and related types are defined in manager.go
 
 // NewValidator creates a new configuration validator
 func NewValidator(cfg *Config) *Validator {
@@ -431,11 +304,9 @@ func (v *Validator) validateAPI() {
 		v.addError("api.api_key_header", "API key header name cannot be empty", v.config.API.APIKeyHeader)
 	}
 
-	// Validate max request size
-	if v.config.API.MaxRequestSize != "" {
-		if !isValidMemorySize(v.config.API.MaxRequestSize) {
-			v.addError("api.max_request_size", "invalid max request size format", v.config.API.MaxRequestSize)
-		}
+	// Validate max request size (if set, must be positive)
+	if v.config.API.MaxRequestSize < 0 {
+		v.addError("api.max_request_size", "max request size cannot be negative", v.config.API.MaxRequestSize)
 	}
 }
 
@@ -461,11 +332,9 @@ func (v *Validator) validateLogging() {
 		}
 	}
 
-	// Validate max size
-	if v.config.Logging.MaxSize != "" {
-		if !isValidMemorySize(v.config.Logging.MaxSize) {
-			v.addError("logging.max_size", "invalid max size format", v.config.Logging.MaxSize)
-		}
+	// Validate max size (if set, must be positive)
+	if v.config.Logging.MaxSize < 0 {
+		v.addError("logging.max_size", "max size cannot be negative", v.config.Logging.MaxSize)
 	}
 
 	// Validate max backups

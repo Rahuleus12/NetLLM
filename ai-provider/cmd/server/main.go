@@ -13,12 +13,13 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 
-	"ai-provider/internal/api/handlers"
-	"ai-provider/internal/config"
-	"ai-provider/internal/models"
-	"ai-provider/internal/storage"
+	"github.com/ai-provider/internal/api/handlers"
+	"github.com/ai-provider/internal/config"
+	"github.com/ai-provider/internal/models"
+	"github.com/ai-provider/internal/storage"
 )
 
 // Version information (set via ldflags during build)
@@ -43,6 +44,7 @@ func main() {
 	}
 
 	log.Printf("Starting AI Provider v%s", Version)
+	log.Printf("Build: %s, Commit: %s", BuildTime, GitCommit)
 
 	// Load configuration
 	cfg, err := loadConfig(*configFile)
@@ -60,8 +62,7 @@ func main() {
 	// Initialize Redis cache
 	cache, err := initializeCache(cfg)
 	if err != nil {
-		log.Printf("Warning: Failed to initialize cache: %v", err)
-		// Continue without cache
+		log.Printf("Warning: Failed to initialize cache: %v (continuing without cache)", err)
 	}
 
 	// Initialize model registry
@@ -92,10 +93,7 @@ func main() {
 	manager := models.NewModelManager(registry, downloadMgr, managerConfig)
 
 	// Initialize API handlers
-	handlerConfig := &handlers.Config{
-		Manager: manager,
-	}
-	modelHandlers := handlers.NewModelHandlers(handlerConfig)
+	modelHandlers := handlers.NewModelHandlers(manager)
 
 	// Setup HTTP server
 	router := mux.NewRouter()
@@ -114,14 +112,14 @@ func main() {
 		Handler:      router,
 		ReadTimeout:  cfg.System.ReadTimeout,
 		WriteTimeout: cfg.System.WriteTimeout,
-		IdleTimeout:  cfg.System.IdleTimeout,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Server starting on %s", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Failed to start server: %v", err)
+			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
 
@@ -130,7 +128,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	log.Println("Shutting down server gracefully...")
 
 	// Give outstanding requests 30 seconds to complete
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -195,9 +193,9 @@ func initializeCache(cfg *config.Config) (*redis.Client, error) {
 
 func setupRoutes(router *mux.Router, handlers *handlers.ModelHandlers) {
 	// Health endpoints
-	router.HandleFunc("/health", handlers.HealthCheck).Methods("GET")
-	router.HandleFunc("/ready", handlers.ReadinessCheck).Methods("GET")
-	router.HandleFunc("/version", VersionHandler).Methods("GET")
+	router.HandleFunc("/health", healthHandler).Methods("GET")
+	router.HandleFunc("/ready", readinessHandler).Methods("GET")
+	router.HandleFunc("/version", versionHandler).Methods("GET")
 
 	// API v1 routes
 	api := router.PathPrefix("/api/v1").Subrouter()
@@ -229,8 +227,21 @@ func setupRoutes(router *mux.Router, handlers *handlers.ModelHandlers) {
 	api.HandleFunc("/models/stats", handlers.GetModelStats).Methods("GET")
 }
 
-func VersionHandler(w http.ResponseWriter, r *http.Request) {
+func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"status":"healthy","timestamp":"%s"}`, time.Now().UTC().Format(time.RFC3339))
+}
+
+func readinessHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"ready":true,"timestamp":"%s"}`, time.Now().UTC().Format(time.RFC3339))
+}
+
+func versionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{"version":"%s","build_time":"%s","git_commit":"%s"}`, Version, BuildTime, GitCommit)
 }
 
