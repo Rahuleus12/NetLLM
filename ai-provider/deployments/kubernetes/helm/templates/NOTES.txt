@@ -1,0 +1,284 @@
+Thank you for installing the AI Provider Helm chart!
+
+Your release is named: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+================================================================================
+                           DEPLOYMENT SUMMARY
+================================================================================
+
+Chart Version: {{ .Chart.Version }}
+App Version: {{ .Chart.AppVersion }}
+
+{{- if .Values.replicaCount }}
+Replicas: {{ .Values.replicaCount }}
+{{- end }}
+
+================================================================================
+                           ACCESSING AI PROVIDER
+================================================================================
+
+{{- if .Values.ingress.enabled }}
+
+1. Get the application URL:
+
+{{- range .Values.ingress.hosts }}
+  export AI_PROVIDER_URL=https://{{ .host }}
+{{- end }}
+
+2. Verify the ingress is ready:
+  kubectl get ingress -n {{ .Release.Namespace }} {{ .Release.Name }}
+
+3. Access the API:
+  curl $AI_PROVIDER_URL/health
+
+{{- else if contains "NodePort" .Values.service.type }}
+
+1. Get the application URL:
+
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "ai-provider.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  export AI_PROVIDER_URL=http://$NODE_IP:$NODE_PORT
+
+2. Access the API:
+  curl $AI_PROVIDER_URL/health
+
+{{- else if contains "LoadBalancer" .Values.service.type }}
+
+1. Get the application URL:
+
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        You can watch the status by running:
+        kubectl get svc -n {{ .Release.Namespace }} -w {{ include "ai-provider.fullname" . }}
+
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "ai-provider.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  export AI_PROVIDER_URL=http://$SERVICE_IP:{{ .Values.service.port }}
+
+2. Access the API:
+  curl $AI_PROVIDER_URL/health
+
+{{- else if contains "ClusterIP" .Values.service.type }}
+
+1. Get the application URL:
+
+  export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "ai-provider.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+  export CONTAINER_PORT=$(kubectl get pod --namespace {{ .Release.Namespace }} $POD_NAME -o jsonpath="{.spec.containers[0].ports[0].containerPort}")
+  kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME {{ .Values.service.port }}:$CONTAINER_PORT &
+
+  export AI_PROVIDER_URL=http://127.0.0.1:{{ .Values.service.port }}
+
+2. Access the API:
+  curl $AI_PROVIDER_URL/health
+
+{{- end }}
+
+================================================================================
+                           GETTING CREDENTIALS
+================================================================================
+
+1. Get the admin username:
+  kubectl get secret -n {{ .Release.Namespace }} {{ .Release.Name }}-admin-credentials -o jsonpath='{.data.ADMIN_USERNAME}' | base64 -d
+
+2. Get the admin password:
+  kubectl get secret -n {{ .Release.Namespace }} {{ .Release.Name }}-admin-credentials -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
+
+3. Get the JWT secret (if needed):
+  kubectl get secret -n {{ .Release.Namespace }} {{ .Release.Name }}-jwt-secret -o jsonpath='{.data.JWT_SECRET_KEY}' | base64 -d
+
+4. Get the database password (if internal PostgreSQL):
+{{- if .Values.postgresql.enabled }}
+  kubectl get secret -n {{ .Release.Namespace }} {{ .Release.Name }}-postgresql -o jsonpath='{.data.password}' | base64 -d
+{{- end }}
+
+5. Get the Redis password (if internal Redis):
+{{- if .Values.redis.enabled }}
+  kubectl get secret -n {{ .Release.Namespace }} {{ .Release.Name }}-redis -o jsonpath='{.data.password}' | base64 -d
+{{- end }}
+
+================================================================================
+                           QUICK START
+================================================================================
+
+1. Login to the API:
+
+  export ADMIN_USER=$(kubectl get secret -n {{ .Release.Namespace }} {{ .Release.Name }}-admin-credentials -o jsonpath='{.data.ADMIN_USERNAME}' | base64 -d)
+  export ADMIN_PASS=$(kubectl get secret -n {{ .Release.Namespace }} {{ .Release.Name }}-admin-credentials -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d)
+
+  curl -X POST $AI_PROVIDER_URL/api/v1/auth/login \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASS\"}"
+
+2. List available models:
+
+  curl -X GET $AI_PROVIDER_URL/api/v1/models \
+    -H "Authorization: Bearer <your-jwt-token>"
+
+3. Download your first model:
+
+  curl -X POST $AI_PROVIDER_URL/api/v1/models \
+    -H "Authorization: Bearer <your-jwt-token>" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "name": "llama-2-7b",
+      "source_url": "https://huggingface.co/meta-llama/Llama-2-7b-chat-hf",
+      "version": "1.0.0"
+    }'
+
+4. Run inference:
+
+  curl -X POST $AI_PROVIDER_URL/api/v1/inference \
+    -H "Authorization: Bearer <your-jwt-token>" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "llama-2-7b",
+      "prompt": "Hello, how are you?",
+      "max_tokens": 100
+    }'
+
+================================================================================
+                           MONITORING
+================================================================================
+
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+
+1. Prometheus metrics are available at:
+   $AI_PROVIDER_URL/metrics
+
+2. ServiceMonitor has been created in namespace: {{ .Values.monitoring.serviceMonitor.namespace }}
+
+3. Verify metrics collection:
+   kubectl get servicemonitor -n {{ .Release.Namespace }}
+
+{{- end }}
+
+{{- if .Values.monitoring.grafanaDashboards.enabled }}
+
+4. Grafana dashboards have been created
+   Import them from the ConfigMap: {{ .Release.Name }}-grafana-dashboard
+
+{{- end }}
+
+5. View application logs:
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "ai-provider.name" . }} -f
+
+6. Check pod status:
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "ai-provider.name" . }}
+
+================================================================================
+                           TROUBLESHOOTING
+================================================================================
+
+If your pods are not starting, check:
+
+1. Pod status and events:
+   kubectl describe pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "ai-provider.name" . }}
+
+2. Pod logs:
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "ai-provider.name" . }} --all-containers
+
+3. Check if persistent volumes are bound:
+   kubectl get pvc -n {{ .Release.Namespace }}
+
+4. Check if database is ready:
+{{- if .Values.postgresql.enabled }}
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name=postgresql
+{{- end }}
+
+5. Check if Redis is ready:
+{{- if .Values.redis.enabled }}
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name=redis
+{{- end }}
+
+6. Check events in the namespace:
+   kubectl get events -n {{ .Release.Namespace }} --sort-by='.lastTimestamp'
+
+================================================================================
+                           USEFUL COMMANDS
+================================================================================
+
+# Port forward to access locally
+kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "ai-provider.fullname" . }} 8080:8080
+
+# Get all resources
+kubectl get all -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+# View resource usage
+kubectl top pods -n {{ .Release.Namespace }}
+
+# Execute into a pod
+kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "ai-provider.fullname" . }} -- /bin/sh
+
+# Run database migration
+kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "ai-provider.fullname" . }} -- ./ai-provider migrate up
+
+# Check application health
+kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "ai-provider.fullname" . }} -- curl localhost:8080/health
+
+# Scale deployment
+kubectl scale deployment -n {{ .Release.Namespace }} {{ include "ai-provider.fullname" . }} --replicas=5
+
+================================================================================
+                           SECURITY NOTES
+================================================================================
+
+⚠️  IMPORTANT: Change default passwords immediately!
+
+1. Update admin password:
+   kubectl patch secret -n {{ .Release.Namespace }} {{ .Release.Name }}-admin-credentials \
+     -p='{"data":{"ADMIN_PASSWORD":"'$(echo -n 'NEW_PASSWORD' | base64)'"} }'
+
+2. Update database password (if using internal PostgreSQL):
+{{- if .Values.postgresql.enabled }}
+   # Update the secret, then restart the pods
+   kubectl patch secret -n {{ .Release.Namespace }} {{ .Release.Name }}-postgresql \
+     -p='{"data":{"password":"'$(echo -n 'NEW_PASSWORD' | base64)'"} }'
+   kubectl rollout restart deployment/{{ include "ai-provider.fullname" . }} -n {{ .Release.Namespace }}
+{{- end }}
+
+3. Update JWT secret:
+   kubectl patch secret -n {{ .Release.Namespace }} {{ .Release.Name }}-jwt-secret \
+     -p='{"data":{"JWT_SECRET_KEY":"'$(echo -n 'NEW_SECRET' | base64)'"} }'
+   kubectl rollout restart deployment/{{ include "ai-provider.fullname" . }} -n {{ .Release.Namespace }}
+
+================================================================================
+                           NEXT STEPS
+================================================================================
+
+1. Configure authentication providers (if using SSO)
+2. Set up backup schedule (if not using defaults)
+3. Configure resource quotas and limits
+4. Set up alerting rules in Prometheus
+5. Import Grafana dashboards
+6. Review and customize network policies
+7. Enable audit logging
+8. Configure multi-tenancy (if needed)
+
+================================================================================
+                           DOCUMENTATION
+================================================================================
+
+Official Documentation: https://docs.ai-provider.io
+API Reference: https://docs.ai-provider.io/api
+GitHub Repository: https://github.com/ai-provider/ai-provider
+Community Support: https://slack.ai-provider.io
+
+================================================================================
+                           UNINSTALL
+================================================================================
+
+To uninstall this release:
+
+  helm uninstall {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+NOTE: This will not delete persistent volumes. To delete them:
+
+  kubectl delete pvc -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+================================================================================
+
+Thank you for using AI Provider! 🚀
+
+For issues or feature requests, please visit:
+https://github.com/ai-provider/ai-provider/issues
+
+================================================================================

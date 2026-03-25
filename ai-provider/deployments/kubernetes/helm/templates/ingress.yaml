@@ -1,0 +1,208 @@
+{{- if .Values.ingress.enabled -}}
+{{- $fullName := include "ai-provider.fullname" . -}}
+{{- $svcPort := .Values.service.port -}}
+apiVersion: {{ include "ai-provider.ingress.apiVersion" . }}
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingress
+  annotations:
+    # NGINX Ingress Controller annotations
+    kubernetes.io/ingress.class: {{ .Values.ingress.className | default "nginx" }}
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: {{ .Values.ingress.annotations.proxyBodySize | default "100m" }}
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: {{ .Values.ingress.annotations.proxyConnectTimeout | default "30" }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ .Values.ingress.annotations.proxySendTimeout | default "300" }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ .Values.ingress.annotations.proxyReadTimeout | default "300" }}
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: SAMEORIGIN";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "X-Forwarded-For $proxy_add_x_forwarded_for";
+      more_set_headers "X-Forwarded-Proto https";
+      more_set_headers "X-Real-IP $remote_addr";
+
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: {{ .Values.ingress.annotations.limitRps | default "100" }}
+    nginx.ingress.kubernetes.io/limit-connections: {{ .Values.ingress.annotations.limitConnections | default "200" }}
+    nginx.ingress.kubernetes.io/limit-burst: {{ .Values.ingress.annotations.limitBurst | default "50" }}
+
+    # CORS configuration
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: {{ .Values.ingress.annotations.corsAllowOrigin | default "*" }}
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, PUT, POST, DELETE, PATCH, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-API-Key,X-Organization-ID"
+    nginx.ingress.kubernetes.io/cors-max-age: "86400"
+
+    # WebSocket support
+    nginx.ingress.kubernetes.io/websocket-services: {{ $fullName }}
+
+    # Backend protocol
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+
+    # SSL/TLS configuration with cert-manager
+    {{- if .Values.ingress.tls.enabled }}
+    {{- if .Values.ingress.tls.certManager.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.certManager.clusterIssuer | default "letsencrypt-prod" }}
+    cert-manager.io/acme-challenge-type: "http01"
+    {{- end }}
+    {{- end }}
+
+    # Monitoring
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "10254"
+
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if and .Values.ingress.className (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+  {{- range .Values.ingress.tls.hosts }}
+  - hosts:
+    - {{ . | quote }}
+    secretName: {{ $.Values.ingress.tls.secretName | default (printf "%s-tls" $fullName) }}
+  {{- end }}
+  {{- end }}
+  rules:
+  {{- range .Values.ingress.hosts }}
+  - host: {{ .host | quote }}
+    http:
+      paths:
+      {{- range .paths }}
+      - path: {{ .path }}
+        {{- if and .pathType (semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion) }}
+        pathType: {{ .pathType }}
+        {{- end }}
+        backend:
+          {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
+          service:
+            name: {{ $fullName }}
+            port:
+              number: {{ $svcPort }}
+          {{- else }}
+          serviceName: {{ $fullName }}
+          servicePort: {{ $svcPort }}
+          {{- end }}
+      {{- end }}
+  {{- end }}
+---
+{{- if .Values.ingress.monitoring.enabled }}
+# Ingress for monitoring endpoints
+apiVersion: {{ include "ai-provider.ingress.apiVersion" . }}
+kind: Ingress
+metadata:
+  name: {{ $fullName }}-monitoring
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring-ingress
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.ingress.className | default "nginx" }}
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: {{ .Values.ingress.monitoring.authSecret | default (printf "%s-monitoring-auth" $fullName) }}
+    nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - AI Provider Monitoring'
+    {{- if .Values.ingress.tls.enabled }}
+    {{- if .Values.ingress.tls.certManager.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.certManager.clusterIssuer | default "letsencrypt-prod" }}
+    {{- end }}
+    {{- end }}
+spec:
+  {{- if and .Values.ingress.className (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+  - hosts:
+    - {{ .Values.ingress.monitoring.hostname | default (printf "monitoring.%s" (index .Values.ingress.hosts 0).host) }}
+    secretName: {{ .Values.ingress.monitoring.tlsSecretName | default (printf "%s-monitoring-tls" $fullName) }}
+  {{- end }}
+  rules:
+  - host: {{ .Values.ingress.monitoring.hostname | default (printf "monitoring.%s" (index .Values.ingress.hosts 0).host) }}
+    http:
+      paths:
+      # Prometheus metrics
+      - path: /metrics
+        pathType: Exact
+        backend:
+          {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+          service:
+            name: {{ $fullName }}
+            port:
+              number: {{ .Values.service.metricsPort }}
+          {{- else }}
+          serviceName: {{ $fullName }}
+          servicePort: {{ .Values.service.metricsPort }}
+          {{- end }}
+      # Health detailed info
+      - path: /health/detailed
+        pathType: Exact
+        backend:
+          {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+          service:
+            name: {{ $fullName }}
+            port:
+              number: {{ $svcPort }}
+          {{- else }}
+          serviceName: {{ $fullName }}
+          servicePort: {{ $svcPort }}
+          {{- end }}
+---
+# Basic Auth Secret for monitoring endpoints
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.ingress.monitoring.authSecret | default (printf "%s-monitoring-auth" $fullName) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring-auth
+type: Opaque
+data:
+  # Default: admin:change_me_in_production
+  # To generate: htpasswd -nb admin <password> | base64
+  auth: {{ .Values.ingress.monitoring.auth | default "YWRtaW46JGFwcjEkTTVBNWg1UjEkZjRFLkUzQnBwTmZPdDk4T0tLdVNxLwoK" }}
+{{- end }}
+---
+{{- if .Values.ingress.defaultBackend.enabled }}
+# Default backend for unmatched routes
+apiVersion: {{ include "ai-provider.ingress.apiVersion" . }}
+kind: Ingress
+metadata:
+  name: {{ $fullName }}-default-backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: default-backend
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.ingress.className | default "nginx" }}
+spec:
+  {{- if and .Values.ingress.className (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  defaultBackend:
+    {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+    service:
+      name: {{ $fullName }}
+      port:
+        number: {{ $svcPort }}
+    {{- else }}
+    serviceName: {{ $fullName }}
+    servicePort: {{ $svcPort }}
+    {{- end }}
+{{- end }}
+{{- end }}

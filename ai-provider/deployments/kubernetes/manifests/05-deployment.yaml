@@ -1,0 +1,489 @@
+# Main AI Provider Application Deployment
+# Production-ready deployment with high availability, security, and monitoring
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-provider
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: application
+    app.kubernetes.io/part-of: ai-provider-platform
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: "AI Provider - Local AI Model Management Platform"
+    contact: "platform-team@example.com"
+    version: "1.0.0"
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ai-provider
+      app.kubernetes.io/component: application
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ai-provider
+        app.kubernetes.io/component: application
+        app.kubernetes.io/part-of: ai-provider-platform
+        app.kubernetes.io/version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+        config.hash: "v1"
+        secrets.hash: "v1"
+    spec:
+      serviceAccountName: ai-provider-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+      # Init container to set proper permissions on data directories
+      - name: init-data-permissions
+        image: busybox:1.36
+        command: ['sh', '-c', 'chmod -R 755 /data && chown -R 1000:1000 /data']
+        volumeMounts:
+        - name: model-storage
+          mountPath: /data/models
+          subPath: models
+        - name: model-storage
+          mountPath: /data/cache
+          subPath: cache
+        - name: temp-storage
+          mountPath: /tmp
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+      # Init container to wait for database
+      - name: wait-for-db
+        image: busybox:1.36
+        command: ['sh', '-c', 'until nc -z postgres 5432; do echo waiting for database; sleep 2; done']
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
+      # Init container to wait for redis
+      - name: wait-for-redis
+        image: busybox:1.36
+        command: ['sh', '-c', 'until nc -z redis 6379; do echo waiting for redis; sleep 2; done']
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
+      # Init container to run database migrations
+      - name: run-migrations
+        image: ai-provider:1.0.0
+        command: ['./ai-provider', 'migrate', 'up']
+        env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: ai-provider-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: ai-provider-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: ai-provider-config
+              key: DB_NAME
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-db-credentials
+              key: DB_USERNAME
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-db-credentials
+              key: DB_PASSWORD
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+      containers:
+      # Main application container
+      - name: ai-provider
+        image: ai-provider:1.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        - name: grpc
+          containerPort: 9091
+          protocol: TCP
+        env:
+        # Server configuration
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        # Load configuration from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: ai-provider-config
+        # Database credentials
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-db-credentials
+              key: DB_USERNAME
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-db-credentials
+              key: DB_PASSWORD
+        # Redis credentials
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-redis-credentials
+              key: REDIS_PASSWORD
+        # JWT secret
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-jwt-secret
+              key: JWT_SECRET_KEY
+        # Encryption keys
+        - name: DATA_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-encryption-keys
+              key: DATA_ENCRYPTION_KEY
+        # Admin credentials
+        - name: ADMIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-admin-credentials
+              key: ADMIN_USERNAME
+        - name: ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-admin-credentials
+              key: ADMIN_PASSWORD
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 30
+          successThreshold: 1
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        - name: model-storage
+          mountPath: /data/models
+          subPath: models
+        - name: model-storage
+          mountPath: /data/cache
+          subPath: cache
+        - name: temp-storage
+          mountPath: /tmp
+        - name: logs
+          mountPath: /var/log/ai-provider
+        - name: audit-logs
+          mountPath: /var/log/ai-provider/audit
+        - name: backup-storage
+          mountPath: /backups
+          readOnly: true
+        - name: plugins
+          mountPath: /plugins
+          readOnly: true
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      # Sidecar container for log aggregation
+      - name: log-collector
+        image: fluent/fluent-bit:2.1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: metrics
+          containerPort: 2020
+          protocol: TCP
+        volumeMounts:
+        - name: logs
+          mountPath: /var/log/ai-provider
+          readOnly: true
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+      # Sidecar container for backup
+      - name: backup-agent
+        image: ai-provider-backup:1.0.0
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: BACKUP_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: ai-provider-config
+              key: BACKUP_ENABLED
+        - name: BACKUP_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: ai-provider-config
+              key: BACKUP_PATH
+        - name: BACKUP_SCHEDULE
+          valueFrom:
+            configMapKeyRef:
+              name: ai-provider-config
+              key: BACKUP_SCHEDULE
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backups
+        - name: model-storage
+          mountPath: /data/models
+          readOnly: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+      volumes:
+      - name: config
+        configMap:
+          name: ai-provider-config
+          items:
+          - key: config.yaml
+            path: config.yaml
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: ai-provider-models-pvc
+      - name: temp-storage
+        emptyDir:
+          sizeLimit: 10Gi
+      - name: logs
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: audit-logs
+        persistentVolumeClaim:
+          claimName: ai-provider-audit-pvc
+      - name: backup-storage
+        persistentVolumeClaim:
+          claimName: ai-provider-backup-pvc
+      - name: plugins
+        configMap:
+          name: ai-provider-plugins
+          optional: true
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+          optional: true
+      # Pod anti-affinity to spread across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: ai-provider
+                  app.kubernetes.io/component: application
+              topologyKey: kubernetes.io/hostname
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: ai-provider
+                app.kubernetes.io/component: application
+            topologyKey: "kubernetes.io/hostname"
+        # Node affinity for GPU nodes (optional)
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 50
+            preference:
+              matchExpressions:
+              - key: nvidia.com/gpu.present
+                operator: Exists
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values:
+                - amd64
+      # Tolerations for dedicated nodes
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "ai-provider"
+        effect: "NoSchedule"
+      # Priority class for high priority
+      priorityClassName: ai-provider-high-priority
+      # Termination grace period
+      terminationGracePeriodSeconds: 30
+      # DNS configuration
+      dnsPolicy: ClusterFirst
+      dnsConfig:
+        options:
+        - name: ndots
+          value: "2"
+        - name: edns0
+---
+# Horizontal Pod Autoscaler for AI Provider
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ai-provider-hpa
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: autoscaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ai-provider
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: ai_provider_inference_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+---
+# Pod Disruption Budget for AI Provider
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ai-provider-pdb
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ai-provider
+      app.kubernetes.io/component: application

@@ -1,0 +1,63 @@
+apiVersion: v2
+name: ai-provider
+version: 1.0.0
+appVersion: "1.0.0"
+description: A Helm chart for AI Provider - Local AI Model Management Platform
+type: application
+keywords:
+  - ai
+  - machine-learning
+  - llm
+  - model-management
+  - inference
+  - kubernetes
+home: https://github.com/ai-provider/ai-provider
+sources:
+  - https://github.com/ai-provider/ai-provider
+maintainers:
+  - name: AI Provider Team
+    email: team@ai-provider.io
+    url: https://ai-provider.io
+icon: https://ai-provider.io/logo.png
+deprecated: false
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/signKey: |
+    fingerprint: "1234-5678-90AB-CDEF"
+    url: "https://ai-provider.io/gpg.key"
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://docs.ai-provider.io
+    - name: Support
+      url: https://support.ai-provider.io
+  artifacthub.io/operator: "false"
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/containsSecurityUpdates: "false"
+  artifacthub.io/changes: |
+    - Added initial Helm chart for AI Provider
+    - Support for Kubernetes 1.25+
+    - Integrated monitoring and alerting
+    - Multi-tenancy support
+    - GPU acceleration support
+dependencies:
+  - name: postgresql
+    version: "12.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+    alias: postgresql
+  - name: redis
+    version: "17.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled
+    alias: redis
+  - name: prometheus
+    version: "15.x.x"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    condition: prometheus.enabled
+    alias: prometheus
+  - name: grafana
+    version: "6.x.x"
+    repository: "https://grafana.github.io/helm-charts"
+    condition: grafana.enabled
+    alias: grafana
+kubeVersion: ">=1.25.0-0"

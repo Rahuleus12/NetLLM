@@ -1,0 +1,67 @@
+{{- if .Values.autoscaling.enabled }}
+apiVersion: {{ include "ai-provider.hpa.apiVersion" . }}
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "ai-provider.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: autoscaler
+  {{- with .Values.autoscaling.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "ai-provider.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+  {{- if .Values.autoscaling.targetCPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+  {{- end }}
+  {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+  {{- end }}
+  {{- with .Values.autoscaling.customMetrics }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+  {{- if .Values.autoscaling.behavior }}
+  behavior:
+    {{- toYaml .Values.autoscaling.behavior | nindent 4 }}
+  {{- else }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+  {{- end }}
+{{- end }}

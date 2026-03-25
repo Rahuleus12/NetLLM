@@ -1,0 +1,342 @@
+# PersistentVolumeClaims for AI Provider Platform
+# Provides persistent storage for models, cache, logs, and backups
+
+---
+# StorageClass for fast SSD storage (for models and cache)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-ssd
+  replication-type: regional-pd
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+allowedTopologies:
+- matchLabelExpressions:
+  - key: topology.kubernetes.io/zone
+    values:
+    - us-central1-a
+    - us-central1-b
+    - us-central1-c
+
+---
+# StorageClass for standard HDD storage (for backups and logs)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard-hdd
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-standard
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+
+---
+# StorageClass for local NVMe storage (for high-performance inference)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-nvme
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+
+---
+# PersistentVolumeClaim for AI Model Storage
+# Large capacity for storing multiple AI models
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-provider-models-pvc
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    storage-type: models
+  annotations:
+    description: "Persistent storage for AI models"
+    volume.beta.kubernetes.io/storage-class: "fast-ssd"
+spec:
+  accessModes:
+  - ReadWriteMany  # Allow multiple pods to read models simultaneously
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 500Gi
+  volumeMode: Filesystem
+  selector:
+    matchLabels:
+      storage-type: models
+
+---
+# PersistentVolumeClaim for Model Cache
+# Fast storage for cached model data and temporary files
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-provider-cache-pvc
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    storage-type: cache
+  annotations:
+    description: "Fast cache storage for model data"
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 100Gi
+  volumeMode: Filesystem
+
+---
+# PersistentVolumeClaim for Audit Logs
+# Persistent storage for audit and compliance logs
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-provider-audit-pvc
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    storage-type: audit
+  annotations:
+    description: "Persistent storage for audit logs"
+    retention.policy: "365days"
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard-hdd
+  resources:
+    requests:
+      storage: 50Gi
+  volumeMode: Filesystem
+
+---
+# PersistentVolumeClaim for Backup Storage
+# Large storage for backup data and disaster recovery
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-provider-backup-pvc
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    storage-type: backup
+  annotations:
+    description: "Storage for system backups and disaster recovery"
+    backup.schedule: "daily"
+    retention.policy: "30days"
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard-hdd
+  resources:
+    requests:
+      storage: 200Gi
+  volumeMode: Filesystem
+
+---
+# PersistentVolumeClaim for Application Logs
+# Storage for application logs and debugging
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-provider-logs-pvc
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    storage-type: logs
+  annotations:
+    description: "Persistent storage for application logs"
+    retention.policy: "90days"
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard-hdd
+  resources:
+    requests:
+      storage: 20Gi
+  volumeMode: Filesystem
+
+---
+# PersistentVolumeClaim for Plugin Storage
+# Storage for plugin binaries and configurations
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-provider-plugins-pvc
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    storage-type: plugins
+  annotations:
+    description: "Storage for plugin binaries and configurations"
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: standard-hdd
+  resources:
+    requests:
+      storage: 10Gi
+  volumeMode: Filesystem
+
+---
+# PersistentVolumeClaim for Inference Working Directory
+# High-performance local storage for inference operations
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-provider-inference-pvc
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    storage-type: inference
+  annotations:
+    description: "High-performance storage for inference operations"
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: local-nvme
+  resources:
+    requests:
+      storage: 50Gi
+  volumeMode: Filesystem
+
+---
+# PersistentVolumeClaim for Metrics and Monitoring Data
+# Storage for Prometheus metrics and monitoring data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-provider-monitoring-pvc
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    storage-type: monitoring
+  annotations:
+    description: "Storage for monitoring and metrics data"
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard-hdd
+  resources:
+    requests:
+      storage: 30Gi
+  volumeMode: Filesystem
+
+---
+# PersistentVolumeClaim for User Data
+# Storage for user uploads and data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-provider-user-data-pvc
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    storage-type: user-data
+  annotations:
+    description: "Storage for user uploads and data"
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: standard-hdd
+  resources:
+    requests:
+      storage: 100Gi
+  volumeMode: Filesystem
+
+---
+# PersistentVolumeClaim for Scratch/Temp Space
+# Temporary storage for processing
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-provider-scratch-pvc
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    storage-type: scratch
+  annotations:
+    description: "Temporary scratch space for processing"
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 50Gi
+  volumeMode: Filesystem
+
+---
+# VolumeSnapshotClass for backup snapshots
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: ai-provider-snapshot-class
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+driver: pd.csi.storage.gke.io
+deletionPolicy: Delete
+parameters:
+  snapshot-creation-timeout: "10m"
+
+---
+# Example VolumeSnapshot for model backup
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: ai-provider-models-snapshot-daily
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: ai-provider-platform
+    snapshot-type: scheduled
+spec:
+  volumeSnapshotClassName: ai-provider-snapshot-class
+  source:
+    persistentVolumeClaimName: ai-provider-models-pvc

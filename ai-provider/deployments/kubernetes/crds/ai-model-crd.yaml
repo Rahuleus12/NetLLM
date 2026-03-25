@@ -1,0 +1,630 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: aimodels.ai-provider.io
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: crd
+    app.kubernetes.io/part-of: ai-provider-platform
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.11.0
+    description: "Custom Resource Definition for AI Models in AI Provider Platform"
+spec:
+  group: ai-provider.io
+  names:
+    kind: AIModel
+    listKind: AIModelList
+    plural: aimodels
+    singular: aimodel
+    shortNames:
+    - aim
+    - model
+    - models
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        description: AIModel is the Schema for the aimodels API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AIModelSpec defines the desired state of AIModel
+            properties:
+              replicas:
+                description: Number of model replicas to deploy
+                format: int32
+                minimum: 0
+                type: integer
+                default: 1
+              model:
+                description: Model specification
+                properties:
+                  name:
+                    description: Name of the model
+                    minLength: 1
+                    type: string
+                  version:
+                    description: Version of the model (semantic versioning)
+                    pattern: '^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+)?$'
+                    type: string
+                  source:
+                    description: Source of the model
+                    properties:
+                      url:
+                        description: URL to download the model from
+                        format: uri
+                        type: string
+                      huggingFace:
+                        description: Hugging Face model source
+                        properties:
+                          modelId:
+                            description: Hugging Face model ID (e.g., meta-llama/Llama-2-7b-chat-hf)
+                            type: string
+                          revision:
+                            description: Specific revision/branch to use
+                            type: string
+                          tokenSecret:
+                            description: Secret containing Hugging Face API token
+                            properties:
+                              name:
+                                description: Name of the secret
+                                type: string
+                              key:
+                                description: Key in the secret
+                                type: string
+                            required:
+                            - name
+                            - key
+                            type: object
+                        required:
+                        - modelId
+                        type: object
+                      s3:
+                        description: S3-compatible storage source
+                        properties:
+                          bucket:
+                            description: S3 bucket name
+                            type: string
+                          key:
+                            description: S3 object key
+                            type: string
+                          region:
+                            description: AWS region
+                            type: string
+                          endpoint:
+                            description: Custom S3 endpoint (for MinIO, etc.)
+                            type: string
+                          credentialsSecret:
+                            description: Secret containing AWS credentials
+                            properties:
+                              name:
+                                description: Name of the secret
+                                type: string
+                              accessKeyIdKey:
+                                description: Key for access key ID
+                                type: string
+                                default: access-key-id
+                              secretAccessKeyKey:
+                                description: Key for secret access key
+                                type: string
+                                default: secret-access-key
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - bucket
+                        - key
+                        type: object
+                      pvc:
+                        description: PVC source for pre-loaded models
+                        properties:
+                          name:
+                            description: PVC name
+                            type: string
+                          path:
+                            description: Path within the PVC
+                            type: string
+                        required:
+                        - name
+                        - path
+                        type: object
+                    type: object
+                  format:
+                    description: Model format
+                    type: string
+                    enum:
+                    - gguf
+                    - ggml
+                    - pytorch
+                    - tensorflow
+                    - onnx
+                    - safetensors
+                    default: gguf
+                  size:
+                    description: Model size specification
+                    properties:
+                      parameters:
+                        description: Number of parameters (e.g., 7B, 13B, 70B)
+                        type: string
+                      diskSize:
+                        description: Disk space required
+                        type: string
+                        pattern: '^[0-9]+(Gi|Mi|Ki|G|M|K)?$'
+                      memoryRequired:
+                        description: Memory required for inference
+                        type: string
+                        pattern: '^[0-9]+(Gi|Mi|Ki|G|M|K)?$'
+                    type: object
+                  quantization:
+                    description: Quantization method
+                    type: string
+                    enum:
+                    - q4_0
+                    - q4_1
+                    - q5_0
+                    - q5_1
+                    - q8_0
+                    - f16
+                    - f32
+                    default: q4_0
+                  checksum:
+                    description: Model file checksum for validation
+                    properties:
+                      type:
+                        description: Checksum algorithm
+                        type: string
+                        enum:
+                        - sha256
+                        - sha512
+                        - md5
+                        default: sha256
+                      value:
+                        description: Checksum value
+                        type: string
+                    required:
+                    - type
+                    - value
+                    type: object
+                required:
+                - name
+                - version
+                - source
+                type: object
+              inference:
+                description: Inference configuration
+                properties:
+                  enabled:
+                    description: Enable inference for this model
+                    type: boolean
+                    default: true
+                  maxConcurrent:
+                    description: Maximum concurrent inference requests
+                    format: int32
+                    minimum: 1
+                    type: integer
+                    default: 10
+                  timeout:
+                    description: Inference timeout in seconds
+                    format: int32
+                    minimum: 1
+                    type: integer
+                    default: 300
+                  batchSize:
+                    description: Batch size for inference
+                    format: int32
+                    minimum: 1
+                    type: integer
+                    default: 8
+                  contextLength:
+                    description: Maximum context length
+                    format: int32
+                    minimum: 1
+                    type: integer
+                    default: 4096
+                  gpu:
+                    description: GPU configuration
+                    properties:
+                      enabled:
+                        description: Enable GPU acceleration
+                        type: boolean
+                        default: false
+                      memoryFraction:
+                        description: Fraction of GPU memory to use
+                        type: number
+                        minimum: 0
+                        maximum: 1
+                        default: 0.8
+                      type:
+                        description: GPU type
+                        type: string
+                        enum:
+                        - nvidia
+                        - amd
+                        default: nvidia
+                      count:
+                        description: Number of GPUs
+                        format: int32
+                        minimum: 1
+                        type: integer
+                        default: 1
+                    type: object
+                  parameters:
+                    description: Model-specific inference parameters
+                    type: object
+                    additionalProperties:
+                      type: string
+                type: object
+              resources:
+                description: Resource requirements
+                properties:
+                  requests:
+                    description: Resource requests
+                    properties:
+                      cpu:
+                        description: CPU request
+                        type: string
+                        pattern: '^[0-9]+m?$'
+                      memory:
+                        description: Memory request
+                        type: string
+                        pattern: '^[0-9]+(Gi|Mi|Ki|G|M|K)?$'
+                      gpu:
+                        description: GPU request
+                        type: string
+                    type: object
+                  limits:
+                    description: Resource limits
+                    properties:
+                      cpu:
+                        description: CPU limit
+                        type: string
+                        pattern: '^[0-9]+m?$'
+                      memory:
+                        description: Memory limit
+                        type: string
+                        pattern: '^[0-9]+(Gi|Mi|Ki|G|M|K)?$'
+                      gpu:
+                        description: GPU limit
+                        type: string
+                    type: object
+                type: object
+              storage:
+                description: Storage configuration
+                properties:
+                  className:
+                    description: Storage class name
+                    type: string
+                  size:
+                    description: Storage size
+                    type: string
+                    pattern: '^[0-9]+(Gi|Mi|Ki|G|M|K)?$'
+                    default: 50Gi
+                  accessMode:
+                    description: Access mode
+                    type: string
+                    enum:
+                    - ReadWriteOnce
+                    - ReadWriteMany
+                    - ReadOnlyMany
+                    default: ReadWriteOnce
+                type: object
+              autoScaling:
+                description: Auto-scaling configuration
+                properties:
+                  enabled:
+                    description: Enable auto-scaling
+                    type: boolean
+                    default: false
+                  minReplicas:
+                    description: Minimum number of replicas
+                    format: int32
+                    minimum: 0
+                    type: integer
+                    default: 1
+                  maxReplicas:
+                    description: Maximum number of replicas
+                    format: int32
+                    minimum: 1
+                    type: integer
+                    default: 10
+                  targetCPUUtilizationPercentage:
+                    description: Target CPU utilization percentage
+                    format: int32
+                    minimum: 1
+                    maximum: 100
+                    type: integer
+                    default: 70
+                  targetMemoryUtilizationPercentage:
+                    description: Target memory utilization percentage
+                    format: int32
+                    minimum: 1
+                    maximum: 100
+                    type: integer
+                    default: 80
+                  targetRequestsPerSecond:
+                    description: Target requests per second per replica
+                    format: int32
+                    minimum: 1
+                    type: integer
+                    default: 100
+                type: object
+              deployment:
+                description: Deployment configuration
+                properties:
+                  strategy:
+                    description: Deployment strategy
+                    type: string
+                    enum:
+                    - RollingUpdate
+                    - Recreate
+                    default: RollingUpdate
+                  affinity:
+                    description: Affinity rules
+                    properties:
+                      nodeAffinity:
+                        description: Node affinity
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      podAffinity:
+                        description: Pod affinity
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      podAntiAffinity:
+                        description: Pod anti-affinity
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                  tolerations:
+                    description: Tolerations
+                    type: array
+                    items:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                  nodeSelector:
+                    description: Node selector
+                    type: object
+                    additionalProperties:
+                      type: string
+                  priorityClassName:
+                    description: Priority class name
+                    type: string
+                type: object
+              monitoring:
+                description: Monitoring configuration
+                properties:
+                  enabled:
+                    description: Enable monitoring
+                    type: boolean
+                    default: true
+                  metricsPort:
+                    description: Port for metrics endpoint
+                    format: int32
+                    type: integer
+                    default: 9090
+                  serviceMonitor:
+                    description: ServiceMonitor configuration
+                    properties:
+                      enabled:
+                        description: Create ServiceMonitor
+                        type: boolean
+                        default: true
+                      interval:
+                        description: Scrape interval
+                        type: string
+                        default: 30s
+                      labels:
+                        description: Additional labels
+                        type: object
+                        additionalProperties:
+                          type: string
+                    type: object
+                type: object
+              retention:
+                description: Retention policy
+                properties:
+                  enabled:
+                    description: Enable retention policy
+                    type: boolean
+                    default: true
+                  maxVersions:
+                    description: Maximum number of versions to keep
+                    format: int32
+                    minimum: 1
+                    type: integer
+                    default: 10
+                  maxAgeDays:
+                    description: Maximum age in days
+                    format: int32
+                    minimum: 1
+                    type: integer
+                    default: 90
+                type: object
+            required:
+            - model
+            type: object
+          status:
+            description: AIModelStatus defines the observed state of AIModel
+            properties:
+              phase:
+                description: Current phase of the model
+                type: string
+                enum:
+                - Pending
+                - Downloading
+                - Validating
+                - Loading
+                - Ready
+                - Failed
+                - Deleting
+                - Unknown
+              conditions:
+                description: Conditions representing the current state
+                type: array
+                items:
+                  properties:
+                    type:
+                      description: Condition type
+                      type: string
+                    status:
+                      description: Condition status
+                      type: string
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                    lastTransitionTime:
+                      description: Last transition time
+                      format: date-time
+                      type: string
+                    lastUpdateTime:
+                      description: Last update time
+                      format: date-time
+                      type: string
+                    reason:
+                      description: Reason for the condition
+                      type: string
+                    message:
+                      description: Human-readable message
+                      type: string
+                  required:
+                  - type
+                  - status
+                  type: object
+              modelInfo:
+                description: Model information
+                properties:
+                  downloadTime:
+                    description: Time when model was downloaded
+                    format: date-time
+                    type: string
+                  size:
+                    description: Actual size on disk
+                    type: string
+                  checksum:
+                    description: Verified checksum
+                    type: string
+                  location:
+                    description: Storage location
+                    type: string
+                type: object
+              endpoints:
+                description: Model service endpoints
+                properties:
+                  http:
+                    description: HTTP endpoint
+                    type: string
+                  grpc:
+                    description: gRPC endpoint
+                    type: string
+                  websocket:
+                    description: WebSocket endpoint
+                    type: string
+                type: object
+              replicas:
+                description: Replica information
+                properties:
+                  desired:
+                    description: Desired number of replicas
+                    format: int32
+                    type: integer
+                  current:
+                    description: Current number of replicas
+                    format: int32
+                    type: integer
+                  ready:
+                    description: Number of ready replicas
+                    format: int32
+                    type: integer
+                  updated:
+                    description: Number of updated replicas
+                    format: int32
+                    type: integer
+                  available:
+                    description: Number of available replicas
+                    format: int32
+                    type: integer
+                type: object
+              metrics:
+                description: Current metrics
+                properties:
+                  requestsTotal:
+                    description: Total number of requests
+                    format: int64
+                    type: integer
+                  requestsPerSecond:
+                    description: Requests per second
+                    type: number
+                  averageLatency:
+                    description: Average latency in milliseconds
+                    type: number
+                  errorRate:
+                    description: Error rate percentage
+                    type: number
+                  lastRequestTime:
+                    description: Time of last request
+                    format: date-time
+                    type: string
+                type: object
+              lastUpdated:
+                description: Last time the status was updated
+                format: date-time
+                type: string
+              observedGeneration:
+                description: Observed generation
+                format: int64
+                type: integer
+              errorMessage:
+                description: Error message if failed
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+      scale:
+        specReplicasPath: .spec.replicas
+        statusReplicasPath: .status.replicas.current
+        labelSelectorPath: .status.labelSelector
+    additionalPrinterColumns:
+    - name: Version
+      type: string
+      description: Model version
+      jsonPath: .spec.model.version
+    - name: Phase
+      type: string
+      description: Current phase
+      jsonPath: .status.phase
+    - name: Replicas
+      type: integer
+      description: Number of replicas
+      jsonPath: .status.replicas.current
+    - name: Ready
+      type: integer
+      description: Number of ready replicas
+      jsonPath: .status.replicas.ready
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    - name: Endpoint
+      type: string
+      description: Service endpoint
+      jsonPath: .status.endpoints.http
+    selectableFields:
+    - jsonPath: .spec.model.name
+    - jsonPath: .spec.model.version
+    - jsonPath: .status.phase

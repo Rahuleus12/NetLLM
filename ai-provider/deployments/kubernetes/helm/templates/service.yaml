@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ai-provider.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePort }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
+    {{- if .Values.monitoring.serviceMonitor.enabled }}
+    - name: metrics
+      port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+    {{- end }}
+  selector:
+    {{- include "ai-provider.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+---
+{{- if .Values.service.headless.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ai-provider.fullname" . }}-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+    {{- if .Values.monitoring.serviceMonitor.enabled }}
+    - name: metrics
+      port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+    {{- end }}
+  selector:
+    {{- include "ai-provider.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+{{- end }}
+---
+{{- if and (eq .Values.service.type "LoadBalancer") .Values.service.external.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ai-provider.fullname" . }}-external
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  {{- with .Values.service.external.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: LoadBalancer
+  {{- if .Values.service.external.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.service.external.loadBalancerIP }}
+  {{- end }}
+  {{- if .Values.service.external.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml .Values.service.external.loadBalancerSourceRanges | nindent 4 }}
+  {{- end }}
+  ports:
+    - name: http
+      port: {{ .Values.service.external.port | default 80 }}
+      targetPort: http
+      protocol: TCP
+    - name: https
+      port: {{ .Values.service.external.httpsPort | default 443 }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "ai-provider.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+{{- end }}

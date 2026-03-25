@@ -1,0 +1,30 @@
+{{- if .Values.global.namespace -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    name: {{ .Values.global.namespace }}
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: namespace
+    app.kubernetes.io/part-of: ai-provider-platform
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    environment: {{ .Values.global.environment }}
+    tier: platform
+    {{- with .Values.global.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    description: "AI Provider - Local AI Model Management Platform"
+    owner: "platform-team"
+    contact: "platform-team@example.com"
+    version: "{{ .Chart.AppVersion }}"
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    {{- with .Values.global.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  finalizers:
+    - kubernetes
+{{- end -}}

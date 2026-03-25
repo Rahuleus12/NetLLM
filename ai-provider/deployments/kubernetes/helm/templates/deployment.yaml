@@ -1,0 +1,461 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-provider.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: application
+  {{- with .Values.deployment.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: {{ .Values.deployment.strategy.maxSurge }}
+      maxUnavailable: {{ .Values.deployment.strategy.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "ai-provider.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: application
+  template:
+    metadata:
+      labels:
+        {{- include "ai-provider.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: application
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.service.metricsPort }}"
+        prometheus.io/path: "/metrics"
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+      {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ai-provider.serviceAccountName" . }}
+      {{- if .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- end }}
+
+      # Init Containers
+      initContainers:
+      {{- if .Values.initContainers.waitForDb.enabled }}
+      - name: wait-for-db
+        image: {{ .Values.initContainers.waitForDb.image }}
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - |
+          until nc -z {{ include "ai-provider.postgresql.fullname" . }} {{ .Values.postgresql.service.ports.postgresql }}; do
+            echo "Waiting for PostgreSQL to be ready..."
+            sleep 2
+          done
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
+      {{- end }}
+
+      {{- if .Values.initContainers.waitForRedis.enabled }}
+      - name: wait-for-redis
+        image: {{ .Values.initContainers.waitForRedis.image }}
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - |
+          until nc -z {{ include "ai-provider.redis.fullname" . }} {{ .Values.redis.service.ports.redis }}; do
+            echo "Waiting for Redis to be ready..."
+            sleep 2
+          done
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
+      {{- end }}
+
+      {{- if .Values.initContainers.migrations.enabled }}
+      - name: run-migrations
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["./ai-provider", "migrate", "up"]
+        env:
+        - name: DB_HOST
+          value: {{ include "ai-provider.postgresql.fullname" . }}
+        - name: DB_PORT
+          value: "{{ .Values.postgresql.service.ports.postgresql }}"
+        - name: DB_NAME
+          value: {{ .Values.postgresql.auth.database }}
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-provider.postgresql.fullname" . }}
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-provider.postgresql.fullname" . }}
+              key: password
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+      {{- end }}
+
+      # Main Containers
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.config.server.port }}
+          protocol: TCP
+        - name: metrics
+          containerPort: {{ .Values.service.metricsPort }}
+          protocol: TCP
+        {{- if .Values.service.grpc.enabled }}
+        - name: grpc
+          containerPort: {{ .Values.service.grpc.port }}
+          protocol: TCP
+        {{- end }}
+
+        env:
+        # Server configuration
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+
+        # Application configuration from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: {{ include "ai-provider.fullname" . }}-config
+
+        # Database credentials
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-provider.postgresql.fullname" . }}
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-provider.postgresql.fullname" . }}
+              key: password
+
+        # Redis credentials
+        {{- if .Values.redis.auth.enabled }}
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-provider.redis.fullname" . }}
+              key: password
+        {{- end }}
+
+        # JWT secret
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-provider.fullname" . }}-secrets
+              key: jwt-secret
+
+        # Encryption keys
+        - name: DATA_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-provider.fullname" . }}-secrets
+              key: data-encryption-key
+        - name: API_KEY_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-provider.fullname" . }}-secrets
+              key: api-key-encryption-key
+
+        # Admin credentials
+        - name: ADMIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-provider.fullname" . }}-secrets
+              key: admin-username
+        - name: ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-provider.fullname" . }}-secrets
+              key: admin-password
+
+        {{- with .Values.extraEnvVars }}
+        # Extra environment variables
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+
+        # Resource limits and requests
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+
+        # Liveness probe
+        {{- if .Values.probes.liveness.enabled }}
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.probes.liveness.path }}
+            port: http
+          initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+          failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          successThreshold: {{ .Values.probes.liveness.successThreshold }}
+        {{- end }}
+
+        # Readiness probe
+        {{- if .Values.probes.readiness.enabled }}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.probes.readiness.path }}
+            port: http
+          initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+          failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          successThreshold: {{ .Values.probes.readiness.successThreshold }}
+        {{- end }}
+
+        # Startup probe
+        {{- if .Values.probes.startup.enabled }}
+        startupProbe:
+          httpGet:
+            path: {{ .Values.probes.startup.path }}
+            port: http
+          initialDelaySeconds: {{ .Values.probes.startup.initialDelaySeconds }}
+          periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+          timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds }}
+          failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          successThreshold: {{ .Values.probes.startup.successThreshold }}
+        {{- end }}
+
+        # Volume mounts
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        {{- if .Values.persistence.models.enabled }}
+        - name: model-storage
+          mountPath: {{ .Values.modelStorage.path }}
+          subPath: models
+        - name: model-storage
+          mountPath: {{ .Values.modelStorage.cachePath }}
+          subPath: cache
+        {{- end }}
+        - name: temp-storage
+          mountPath: /tmp
+        {{- if .Values.persistence.logs.enabled }}
+        - name: logs
+          mountPath: /var/log/ai-provider
+        {{- end }}
+        {{- if .Values.persistence.audit.enabled }}
+        - name: audit-logs
+          mountPath: /var/log/ai-provider/audit
+        {{- end }}
+        {{- if .Values.backup.enabled }}
+        - name: backup-storage
+          mountPath: {{ .Values.backup.path }}
+          readOnly: true
+        {{- end }}
+        {{- if .Values.plugins.enabled }}
+        - name: plugins
+          mountPath: {{ .Values.plugins.path }}
+          readOnly: true
+        {{- end }}
+        {{- with .Values.extraVolumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+
+        # Security context
+        {{- if .Values.securityContext }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        {{- end }}
+
+        # Lifecycle hooks
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
+
+      {{- if .Values.sidecars.logCollector.enabled }}
+      # Log collector sidecar
+      - name: log-collector
+        image: {{ .Values.sidecars.logCollector.image }}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: metrics
+          containerPort: 2020
+          protocol: TCP
+        volumeMounts:
+        - name: logs
+          mountPath: /var/log/ai-provider
+          readOnly: true
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+        resources:
+          {{- toYaml .Values.sidecars.logCollector.resources | nindent 10 }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+      {{- end }}
+
+      {{- if .Values.sidecars.backupAgent.enabled }}
+      # Backup agent sidecar
+      - name: backup-agent
+        image: {{ .Values.sidecars.backupAgent.image }}
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: BACKUP_ENABLED
+          value: "{{ .Values.backup.enabled }}"
+        - name: BACKUP_PATH
+          value: {{ .Values.backup.path }}
+        - name: BACKUP_SCHEDULE
+          value: {{ .Values.backup.schedule }}
+        volumeMounts:
+        - name: backup-storage
+          mountPath: {{ .Values.backup.path }}
+        {{- if .Values.persistence.models.enabled }}
+        - name: model-storage
+          mountPath: {{ .Values.modelStorage.path }}
+          readOnly: true
+        {{- end }}
+        resources:
+          {{- toYaml .Values.sidecars.backupAgent.resources | nindent 10 }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+      {{- end }}
+
+      {{- with .Values.extraContainers }}
+      # Extra containers
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+
+      # Volumes
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "ai-provider.fullname" . }}-config
+      {{- if .Values.persistence.models.enabled }}
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: {{ include "ai-provider.fullname" . }}-models
+      {{- end }}
+      - name: temp-storage
+        emptyDir:
+          sizeLimit: 10Gi
+      {{- if .Values.persistence.logs.enabled }}
+      - name: logs
+        emptyDir:
+          sizeLimit: 1Gi
+      {{- end }}
+      {{- if .Values.persistence.audit.enabled }}
+      - name: audit-logs
+        persistentVolumeClaim:
+          claimName: {{ include "ai-provider.fullname" . }}-audit
+      {{- end }}
+      {{- if .Values.backup.enabled }}
+      - name: backup-storage
+        persistentVolumeClaim:
+          claimName: {{ include "ai-provider.fullname" . }}-backup
+      {{- end }}
+      {{- if .Values.plugins.enabled }}
+      - name: plugins
+        configMap:
+          name: {{ include "ai-provider.fullname" . }}-plugins
+          optional: true
+      {{- end }}
+      {{- if .Values.sidecars.logCollector.enabled }}
+      - name: fluent-bit-config
+        configMap:
+          name: {{ include "ai-provider.fullname" . }}-fluent-bit
+          optional: true
+      {{- end }}
+      {{- with .Values.extraVolumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+
+      # Affinity rules
+      {{- if .Values.affinity }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  {{- include "ai-provider.selectorLabels" . | nindent 18 }}
+                  app.kubernetes.io/component: application
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
+
+      # Node selector
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      # Tolerations
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      # Priority class
+      {{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName }}
+      {{- end }}
+
+      # Termination grace period
+      terminationGracePeriodSeconds: 30
+
+      # DNS configuration
+      dnsPolicy: ClusterFirst
+      dnsConfig:
+        options:
+        - name: ndots
+          value: "2"
+        - name: edns0
+
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

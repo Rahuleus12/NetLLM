@@ -1,0 +1,549 @@
+# Monitoring Resources for AI Provider Platform
+# Includes ServiceMonitors for Prometheus Operator and PrometheusRules for alerting
+
+---
+# ServiceMonitor for AI Provider Application
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-provider
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: ai-provider-platform
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ai-provider
+      app.kubernetes.io/component: api
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+    - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+      targetLabel: app
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'ai_provider_.*'
+      action: keep
+
+---
+# ServiceMonitor for PostgreSQL
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: ai-provider-platform
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/component: database
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+
+---
+# ServiceMonitor for Redis
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: redis
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: ai-provider-platform
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: cache
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+
+---
+# PrometheusRule for AI Provider Alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ai-provider-alerts
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: alerting
+    app.kubernetes.io/part-of: ai-provider-platform
+    release: prometheus
+spec:
+  groups:
+  # Application Health Alerts
+  - name: ai-provider-health
+    rules:
+    - alert: AIAPIProviderDown
+      expr: up{job="ai-provider"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: api
+      annotations:
+        summary: "AI Provider API is down"
+        description: "AI Provider API instance {{ $labels.instance }} has been down for more than 1 minute."
+        runbook_url: "https://runbooks.example.com/ai-provider/down"
+
+    - alert: AIAPIProviderHighErrorRate
+      expr: |
+        sum(rate(http_requests_total{job="ai-provider",status=~"5.."}[5m])) /
+        sum(rate(http_requests_total{job="ai-provider"}[5m])) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "High error rate on AI Provider API"
+        description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+        runbook_url: "https://runbooks.example.com/ai-provider/high-error-rate"
+
+    - alert: AIAPIProviderHighLatency
+      expr: |
+        histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="ai-provider"}[5m])) by (le)) > 2
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "High latency on AI Provider API"
+        description: "95th percentile latency is {{ $value | humanizeDuration }}"
+        runbook_url: "https://runbooks.example.com/ai-provider/high-latency"
+
+    - alert: AIAPIProviderPodCrashLooping
+      expr: |
+        rate(kube_pod_container_status_restarts_total{container="ai-provider"}[15m]) * 60 * 15 > 3
+      for: 5m
+      labels:
+        severity: critical
+        component: api
+      annotations:
+        summary: "AI Provider pod is crash looping"
+        description: "Pod {{ $labels.pod }} has restarted {{ $value }} times in the last 15 minutes"
+        runbook_url: "https://runbooks.example.com/ai-provider/crash-looping"
+
+  # Inference Alerts
+  - name: ai-provider-inference
+    rules:
+    - alert: AIInferenceHighQueueDepth
+      expr: ai_provider_inference_queue_depth > 100
+      for: 5m
+      labels:
+        severity: warning
+        component: inference
+      annotations:
+        summary: "High inference queue depth"
+        description: "Inference queue depth is {{ $value }} (threshold: 100)"
+        runbook_url: "https://runbooks.example.com/ai-provider/queue-depth"
+
+    - alert: AIInferenceSlowProcessing
+      expr: |
+        histogram_quantile(0.95, sum(rate(ai_provider_inference_duration_seconds_bucket[5m])) by (le)) > 30
+      for: 5m
+      labels:
+        severity: warning
+        component: inference
+      annotations:
+        summary: "Slow inference processing"
+        description: "95th percentile inference time is {{ $value | humanizeDuration }}"
+        runbook_url: "https://runbooks.example.com/ai-provider/slow-inference"
+
+    - alert: AIInferenceHighFailureRate
+      expr: |
+        sum(rate(ai_provider_inference_requests_failed_total[5m])) /
+        sum(rate(ai_provider_inference_requests_total[5m])) > 0.1
+      for: 5m
+      labels:
+        severity: critical
+        component: inference
+      annotations:
+        summary: "High inference failure rate"
+        description: "Inference failure rate is {{ $value | humanizePercentage }}"
+        runbook_url: "https://runbooks.example.com/ai-provider/inference-failures"
+
+    - alert: AIInferenceGPUUtilizationHigh
+      expr: ai_provider_gpu_utilization > 0.9
+      for: 10m
+      labels:
+        severity: warning
+        component: inference
+      annotations:
+        summary: "High GPU utilization"
+        description: "GPU utilization is {{ $value | humanizePercentage }}"
+        runbook_url: "https://runbooks.example.com/ai-provider/gpu-utilization"
+
+    - alert: AIInferenceGPUMemoryHigh
+      expr: ai_provider_gpu_memory_used / ai_provider_gpu_memory_total > 0.85
+      for: 5m
+      labels:
+        severity: warning
+        component: inference
+      annotations:
+        summary: "High GPU memory usage"
+        description: "GPU memory usage is {{ $value | humanizePercentage }}"
+        runbook_url: "https://runbooks.example.com/ai-provider/gpu-memory"
+
+  # Model Management Alerts
+  - name: ai-provider-models
+    rules:
+    - alert: AIModelDownloadFailed
+      expr: |
+        sum(rate(ai_provider_model_downloads_failed_total[1h])) > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: models
+      annotations:
+        summary: "Model download failures detected"
+        description: "{{ $value }} model download failures in the last hour"
+        runbook_url: "https://runbooks.example.com/ai-provider/model-download"
+
+    - alert: AIModelValidationFailed
+      expr: |
+        sum(rate(ai_provider_model_validations_failed_total[1h])) > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: models
+      annotations:
+        summary: "Model validation failures detected"
+        description: "{{ $value }} model validation failures in the last hour"
+        runbook_url: "https://runbooks.example.com/ai-provider/model-validation"
+
+    - alert: AIModelStorageLow
+      expr: |
+        (ai_provider_storage_available_bytes / ai_provider_storage_total_bytes) < 0.1
+      for: 5m
+      labels:
+        severity: critical
+        component: storage
+      annotations:
+        summary: "Low model storage space"
+        description: "Only {{ $value | humanizePercentage }} storage space remaining"
+        runbook_url: "https://runbooks.example.com/ai-provider/storage-low"
+
+  # Database Alerts
+  - name: ai-provider-database
+    rules:
+    - alert: AIPostgresDown
+      expr: up{job="postgres"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: database
+      annotations:
+        summary: "PostgreSQL is down"
+        description: "PostgreSQL instance {{ $labels.instance }} has been down for more than 1 minute"
+        runbook_url: "https://runbooks.example.com/ai-provider/postgres-down"
+
+    - alert: AIPostgresHighConnections
+      expr: |
+        pg_stat_activity_count / pg_settings_max_connections > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        component: database
+      annotations:
+        summary: "High PostgreSQL connection count"
+        description: "PostgreSQL connections are at {{ $value | humanizePercentage }}"
+        runbook_url: "https://runbooks.example.com/ai-provider/postgres-connections"
+
+    - alert: AIPostgresSlowQueries
+      expr: |
+        rate(pg_stat_statements_mean_exec_time_seconds[5m]) > 1
+      for: 5m
+      labels:
+        severity: warning
+        component: database
+      annotations:
+        summary: "Slow PostgreSQL queries detected"
+        description: "Average query execution time is {{ $value | humanizeDuration }}"
+        runbook_url: "https://runbooks.example.com/ai-provider/slow-queries"
+
+    - alert: AIPostgresReplicationLag
+      expr: pg_replication_lag_seconds > 10
+      for: 5m
+      labels:
+        severity: warning
+        component: database
+      annotations:
+        summary: "PostgreSQL replication lag detected"
+        description: "Replication lag is {{ $value }} seconds"
+        runbook_url: "https://runbooks.example.com/ai-provider/replication-lag"
+
+  # Cache Alerts
+  - name: ai-provider-cache
+    rules:
+    - alert: AIRedisDown
+      expr: up{job="redis"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: cache
+      annotations:
+        summary: "Redis is down"
+        description: "Redis instance {{ $labels.instance }} has been down for more than 1 minute"
+        runbook_url: "https://runbooks.example.com/ai-provider/redis-down"
+
+    - alert: AIRedisHighMemoryUsage
+      expr: |
+        redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+      for: 5m
+      labels:
+        severity: warning
+        component: cache
+      annotations:
+        summary: "High Redis memory usage"
+        description: "Redis memory usage is {{ $value | humanizePercentage }}"
+        runbook_url: "https://runbooks.example.com/ai-provider/redis-memory"
+
+    - alert: AIRedisHighConnectionCount
+      expr: redis_connected_clients > 9000
+      for: 5m
+      labels:
+        severity: warning
+        component: cache
+      annotations:
+        summary: "High Redis connection count"
+        description: "Redis has {{ $value }} connected clients"
+        runbook_url: "https://runbooks.example.com/ai-provider/redis-connections"
+
+    - alert: AIRedisRejectedConnections
+      expr: rate(redis_rejected_connections_total[5m]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        component: cache
+      annotations:
+        summary: "Redis is rejecting connections"
+        description: "Redis is rejecting {{ $value }} connections per second"
+        runbook_url: "https://runbooks.example.com/ai-provider/redis-rejected"
+
+  # Resource Alerts
+  - name: ai-provider-resources
+    rules:
+    - alert: AIProviderHighCPU
+      expr: |
+        rate(container_cpu_usage_seconds_total{container="ai-provider"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        component: resources
+      annotations:
+        summary: "High CPU usage on AI Provider"
+        description: "CPU usage is {{ $value | humanizePercentage }}"
+        runbook_url: "https://runbooks.example.com/ai-provider/cpu-usage"
+
+    - alert: AIProviderHighMemory
+      expr: |
+        container_memory_usage_bytes{container="ai-provider"} / container_spec_memory_limit_bytes{container="ai-provider"} > 0.85
+      for: 5m
+      labels:
+        severity: warning
+        component: resources
+      annotations:
+        summary: "High memory usage on AI Provider"
+        description: "Memory usage is {{ $value | humanizePercentage }}"
+        runbook_url: "https://runbooks.example.com/ai-provider/memory-usage"
+
+    - alert: AIProviderPodPending
+      expr: kube_pod_status_phase{phase="Pending",pod=~"ai-provider-.*"} > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: resources
+      annotations:
+        summary: "AI Provider pod is in pending state"
+        description: "Pod {{ $labels.pod }} has been pending for more than 5 minutes"
+        runbook_url: "https://runbooks.example.com/ai-provider/pod-pending"
+
+  # Security Alerts
+  - name: ai-provider-security
+    rules:
+    - alert: AIProviderHighAuthFailures
+      expr: |
+        sum(rate(ai_provider_auth_failures_total[5m])) > 10
+      for: 5m
+      labels:
+        severity: warning
+        component: security
+      annotations:
+        summary: "High authentication failure rate"
+        description: "{{ $value }} authentication failures per second"
+        runbook_url: "https://runbooks.example.com/ai-provider/auth-failures"
+
+    - alert: AIProviderRateLimitExceeded
+      expr: |
+        sum(rate(ai_provider_rate_limit_exceeded_total[5m])) > 100
+      for: 5m
+      labels:
+        severity: warning
+        component: security
+      annotations:
+        summary: "Rate limit frequently exceeded"
+        description: "Rate limit exceeded {{ $value }} times per second"
+        runbook_url: "https://runbooks.example.com/ai-provider/rate-limit"
+
+    - alert: AIProviderSuspiciousActivity
+      expr: |
+        sum(rate(ai_provider_suspicious_requests_total[5m])) > 5
+      for: 1m
+      labels:
+        severity: critical
+        component: security
+      annotations:
+        summary: "Suspicious activity detected"
+        description: "{{ $value }} suspicious requests per second"
+        runbook_url: "https://runbooks.example.com/ai-provider/suspicious-activity"
+
+---
+# Grafana Dashboard ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-provider-grafana-dashboard
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: dashboard
+    grafana_dashboard: "1"
+data:
+  ai-provider-overview.json: |
+    {
+      "dashboard": {
+        "title": "AI Provider Overview",
+        "uid": "ai-provider-overview",
+        "tags": ["ai-provider", "overview"],
+        "timezone": "browser",
+        "schemaVersion": 16,
+        "version": 1,
+        "refresh": "30s",
+        "panels": [
+          {
+            "title": "Request Rate",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total{job=\"ai-provider\"}[5m]))",
+                "legendFormat": "Requests/sec"
+              }
+            ]
+          },
+          {
+            "title": "Error Rate",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total{job=\"ai-provider\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"ai-provider\"}[5m]))",
+                "legendFormat": "Error Rate"
+              }
+            ]
+          },
+          {
+            "title": "Latency (95th percentile)",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"ai-provider\"}[5m])) by (le))",
+                "legendFormat": "p95 Latency"
+              }
+            ]
+          },
+          {
+            "title": "Inference Queue Depth",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+            "targets": [
+              {
+                "expr": "ai_provider_inference_queue_depth",
+                "legendFormat": "Queue Depth"
+              }
+            ]
+          },
+          {
+            "title": "Active Models",
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16},
+            "targets": [
+              {
+                "expr": "count(ai_provider_model_info)",
+                "legendFormat": "Models"
+              }
+            ]
+          },
+          {
+            "title": "Database Connections",
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 6, "y": 16},
+            "targets": [
+              {
+                "expr": "pg_stat_activity_count",
+                "legendFormat": "Connections"
+              }
+            ]
+          },
+          {
+            "title": "Cache Hit Rate",
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 12, "y": 16},
+            "targets": [
+              {
+                "expr": "rate(redis_keyspace_hits_total[5m]) / (rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m]))",
+                "legendFormat": "Hit Rate"
+              }
+            ]
+          },
+          {
+            "title": "GPU Utilization",
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 18, "y": 16},
+            "targets": [
+              {
+                "expr": "avg(ai_provider_gpu_utilization)",
+                "legendFormat": "GPU %"
+              }
+            ]
+          }
+        ]
+      }
+    }

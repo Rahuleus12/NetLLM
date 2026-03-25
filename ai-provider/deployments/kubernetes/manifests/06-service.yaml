@@ -1,0 +1,94 @@
+# Kubernetes Service for AI Provider Application
+# Exposes the AI Provider pods for internal cluster communication
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-provider-service
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: ai-provider-platform
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: "AI Provider API Service"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  - name: health
+    port: 8081
+    targetPort: health
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: api
+  sessionAffinity: None
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-provider-headless
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: ai-provider-platform
+  annotations:
+    description: "Headless service for StatefulSet"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-provider-external
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: ai-provider-platform
+  annotations:
+    description: "External service for AI Provider (when needed)"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: http
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: api

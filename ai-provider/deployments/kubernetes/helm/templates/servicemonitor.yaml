@@ -1,0 +1,116 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ai-provider.fullname" . }}
+  namespace: {{ .Values.monitoring.serviceMonitor.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.monitoring.serviceMonitor.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ai-provider.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+    scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+    honorLabels: {{ .Values.monitoring.serviceMonitor.honorLabels | default true }}
+    {{- with .Values.monitoring.serviceMonitor.relabelings }}
+    relabelings:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.monitoring.serviceMonitor.metricRelabelings }}
+    metricRelabelings:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.monitoring.serviceMonitor.tlsConfig }}
+    tlsConfig:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- if .Values.monitoring.serviceMonitor.basicAuth }}
+    basicAuth:
+      username:
+        name: {{ .Values.monitoring.serviceMonitor.basicAuth.usernameSecret.name }}
+        key: {{ .Values.monitoring.serviceMonitor.basicAuth.usernameSecret.key }}
+      password:
+        name: {{ .Values.monitoring.serviceMonitor.basicAuth.passwordSecret.name }}
+        key: {{ .Values.monitoring.serviceMonitor.basicAuth.passwordSecret.key }}
+    {{- end }}
+    {{- if .Values.monitoring.serviceMonitor.bearerTokenFile }}
+    bearerTokenFile: {{ .Values.monitoring.serviceMonitor.bearerTokenFile }}
+    {{- end }}
+    {{- if .Values.monitoring.serviceMonitor.bearerTokenSecret }}
+    bearerTokenSecret:
+      name: {{ .Values.monitoring.serviceMonitor.bearerTokenSecret.name }}
+      key: {{ .Values.monitoring.serviceMonitor.bearerTokenSecret.key }}
+    {{- end }}
+{{- end }}
+---
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled .Values.postgresql.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ai-provider.fullname" . }}-postgresql
+  namespace: {{ .Values.monitoring.serviceMonitor.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database-monitoring
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+    scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+    honorLabels: true
+{{- end }}
+---
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled .Values.redis.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ai-provider.fullname" . }}-redis
+  namespace: {{ .Values.monitoring.serviceMonitor.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cache-monitoring
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+    scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+    honorLabels: true
+{{- end }}

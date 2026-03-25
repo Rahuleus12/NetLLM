@@ -1,0 +1,342 @@
+{{- if .Values.config }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ai-provider.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: config
+  {{- with .Values.config.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  # Application Configuration
+  APP_NAME: {{ .Values.config.appName | default "ai-provider" | quote }}
+  APP_VERSION: {{ .Values.config.appVersion | default .Chart.AppVersion | quote }}
+  APP_ENV: {{ .Values.config.appEnv | default .Values.global.environment | quote }}
+
+  # Server Configuration
+  SERVER_HOST: {{ .Values.config.server.host | default "0.0.0.0" | quote }}
+  SERVER_PORT: {{ .Values.config.server.port | default 8080 | quote }}
+  SERVER_READ_TIMEOUT: {{ .Values.config.server.readTimeout | default 30 | quote }}
+  SERVER_WRITE_TIMEOUT: {{ .Values.config.server.writeTimeout | default 30 | quote }}
+  SERVER_IDLE_TIMEOUT: {{ .Values.config.server.idleTimeout | default 60 | quote }}
+  SERVER_MAX_HEADER_BYTES: {{ .Values.config.server.maxHeaderBytes | default 1048576 | quote }}
+
+  # API Configuration
+  API_BASE_PATH: {{ .Values.config.api.basePath | default "/api/v1" | quote }}
+  API_RATE_LIMIT: {{ .Values.config.api.rateLimit | default 100 | quote }}
+  API_RATE_BURST: {{ .Values.config.api.rateBurst | default 200 | quote }}
+  API_CORS_ENABLED: {{ .Values.config.api.corsEnabled | default true | quote }}
+  API_CORS_ORIGINS: {{ .Values.config.api.corsOrigins | default "*" | quote }}
+
+  # Database Configuration (non-sensitive)
+  DB_HOST: {{ include "ai-provider.postgresql.host" . }}
+  DB_PORT: {{ include "ai-provider.postgresql.port" . | quote }}
+  DB_NAME: {{ include "ai-provider.postgresql.database" . }}
+  DB_SSLMODE: {{ .Values.config.database.sslMode | default "require" | quote }}
+  DB_MAX_CONNECTIONS: {{ .Values.config.database.maxConnections | default 50 | quote }}
+  DB_MAX_IDLE: {{ .Values.config.database.maxIdle | default 10 | quote }}
+  DB_CONN_TIMEOUT: {{ .Values.config.database.connTimeout | default 30 | quote }}
+
+  # Redis Configuration (non-sensitive)
+  REDIS_HOST: {{ include "ai-provider.redis.host" . }}
+  REDIS_PORT: {{ include "ai-provider.redis.port" . | quote }}
+  REDIS_DB: {{ .Values.config.redis.db | default 0 | quote }}
+  REDIS_POOL_SIZE: {{ .Values.config.redis.poolSize | default 100 | quote }}
+  REDIS_MIN_IDLE: {{ .Values.config.redis.minIdle | default 20 | quote }}
+
+  # Model Storage Configuration
+  MODEL_STORAGE_PATH: {{ .Values.modelStorage.path | default "/data/models" | quote }}
+  MODEL_CACHE_PATH: {{ .Values.modelStorage.cachePath | default "/data/cache" | quote }}
+  MODEL_TEMP_PATH: {{ .Values.modelStorage.tempPath | default "/tmp/models" | quote }}
+  MODEL_MAX_SIZE_GB: {{ .Values.modelStorage.maxSizeGB | default 500 | quote }}
+  MODEL_DOWNLOAD_THREADS: {{ .Values.modelStorage.downloadThreads | default 4 | quote }}
+  MODEL_DOWNLOAD_TIMEOUT: {{ .Values.modelStorage.downloadTimeout | default 3600 | quote }}
+  MODEL_VALIDATION_ENABLED: {{ .Values.modelStorage.validationEnabled | default true | quote }}
+
+  # Inference Configuration
+  INFERENCE_ENABLED: {{ .Values.inference.enabled | default true | quote }}
+  INFERENCE_MAX_CONCURRENT: {{ .Values.inference.maxConcurrent | default 10 | quote }}
+  INFERENCE_TIMEOUT: {{ .Values.inference.timeout | default 300 | quote }}
+  INFERENCE_BATCH_SIZE: {{ .Values.inference.batchSize | default 8 | quote }}
+  INFERENCE_GPU_ENABLED: {{ .Values.inference.gpu.enabled | default true | quote }}
+  INFERENCE_GPU_MEMORY_FRACTION: {{ .Values.inference.gpu.memoryFraction | default 0.8 | quote }}
+  INFERENCE_CPU_THREADS: {{ .Values.inference.cpuThreads | default 8 | quote }}
+
+  # Monitoring Configuration
+  METRICS_ENABLED: {{ .Values.monitoring.serviceMonitor.enabled | default true | quote }}
+  METRICS_PORT: {{ .Values.service.metricsPort | default 9090 | quote }}
+  METRICS_PATH: "/metrics"
+  HEALTH_ENABLED: "true"
+  HEALTH_PATH: "/health"
+  HEALTH_PORT: {{ .Values.config.server.port | default 8080 | quote }}
+
+  # Logging Configuration
+  LOG_LEVEL: {{ .Values.config.logging.level | default "info" | quote }}
+  LOG_FORMAT: {{ .Values.config.logging.format | default "json" | quote }}
+  LOG_OUTPUT: {{ .Values.config.logging.output | default "stdout" | quote }}
+  LOG_INCLUDE_CALLER: {{ .Values.config.logging.includeCaller | default true | quote }}
+  LOG_INCLUDE_TIMESTAMP: {{ .Values.config.logging.includeTimestamp | default true | quote }}
+
+  # Security Configuration (non-sensitive)
+  SECURITY_ENABLED: {{ .Values.security.enabled | default true | quote }}
+  SECURITY_AUTH_REQUIRED: {{ .Values.security.authRequired | default true | quote }}
+  SECURITY_JWT_ISSUER: {{ .Values.security.jwt.issuer | default "ai-provider" | quote }}
+  SECURITY_JWT_EXPIRY: {{ .Values.security.jwt.expiry | default 3600 | quote }}
+  SECURITY_REFRESH_EXPIRY: {{ .Values.security.jwt.refreshExpiry | default 604800 | quote }}
+  SECURITY_BCRYPT_COST: {{ .Values.security.bcrypt.cost | default 12 | quote }}
+  SECURITY_RATE_LIMIT_ENABLED: {{ .Values.security.rateLimit.enabled | default true | quote }}
+
+  # Multi-tenancy Configuration
+  TENANCY_ENABLED: {{ .Values.tenancy.enabled | default true | quote }}
+  TENANCY_MAX_ORGS: {{ .Values.tenancy.maxOrgs | default 1000 | quote }}
+  TENANCY_MAX_USERS_PER_ORG: {{ .Values.tenancy.maxUsersPerOrg | default 500 | quote }}
+  TENANCY_DEFAULT_QUOTA: {{ .Values.tenancy.defaultQuota | default 1000000 | quote }}
+
+  # Plugin Configuration
+  PLUGIN_ENABLED: {{ .Values.plugins.enabled | default true | quote }}
+  PLUGIN_PATH: {{ .Values.plugins.path | default "/plugins" | quote }}
+  PLUGIN_MAX_PLUGINS: {{ .Values.plugins.maxPlugins | default 100 | quote }}
+  PLUGIN_SANDBOX_ENABLED: {{ .Values.plugins.sandboxEnabled | default true | quote }}
+
+  # Integration Configuration
+  INTEGRATION_ENABLED: {{ .Values.integrations.enabled | default true | quote }}
+  INTEGRATION_TIMEOUT: {{ .Values.integrations.timeout | default 30 | quote }}
+  INTEGRATION_RETRY_COUNT: {{ .Values.integrations.retryCount | default 3 | quote }}
+  INTEGRATION_RETRY_DELAY: {{ .Values.integrations.retryDelay | default 5 | quote }}
+
+  # Webhook Configuration
+  WEBHOOK_ENABLED: {{ .Values.webhooks.enabled | default true | quote }}
+  WEBHOOK_TIMEOUT: {{ .Values.webhooks.timeout | default 10 | quote }}
+  WEBHOOK_RETRY_COUNT: {{ .Values.webhooks.retryCount | default 3 | quote }}
+  WEBHOOK_MAX_EVENTS: {{ .Values.webhooks.maxEvents | default 10000 | quote }}
+
+  # Backup Configuration
+  BACKUP_ENABLED: {{ .Values.backup.enabled | default true | quote }}
+  BACKUP_PATH: {{ .Values.backup.path | default "/backups" | quote }}
+  BACKUP_SCHEDULE: {{ .Values.backup.schedule | default "0 2 * * *" | quote }}
+  BACKUP_RETENTION_DAYS: {{ .Values.backup.retentionDays | default 30 | quote }}
+  BACKUP_COMPRESSION: {{ .Values.backup.compression | default "gzip" | quote }}
+
+  # Maintenance Configuration
+  MAINTENANCE_MODE: {{ .Values.maintenance.enabled | default false | quote }}
+  MAINTENANCE_MESSAGE: {{ .Values.maintenance.message | default "System under maintenance" | quote }}
+
+  # Feature Flags
+  FEATURE_BATCH_INFERENCE: {{ .Values.config.features.batchInference | default true | quote }}
+  FEATURE_STREAMING_INFERENCE: {{ .Values.config.features.streamingInference | default true | quote }}
+  FEATURE_GPU_ACCELERATION: {{ .Values.config.features.gpuAcceleration | default true | quote }}
+  FEATURE_MULTI_REGION: {{ .Values.config.features.multiRegion | default false | quote }}
+  FEATURE_ANALYTICS: {{ .Values.config.features.analytics | default true | quote }}
+  FEATURE_BILLING: {{ .Values.config.features.billing | default true | quote }}
+
+  # Performance Tuning
+  PERF_MAX_GOROUTINES: {{ .Values.config.performance.maxGoroutines | default 10000 | quote }}
+  PERF_CHAN_BUFFER_SIZE: {{ .Values.config.performance.chanBufferSize | default 1000 | quote }}
+  PERF_GC_PERCENT: {{ .Values.config.performance.gcPercent | default 100 | quote }}
+  PERF_MEMORY_LIMIT_MB: {{ .Values.config.performance.memoryLimitMB | default 4096 | quote }}
+
+  # Resource Limits
+  RESOURCE_MAX_MODELS: {{ .Values.config.resources.maxModels | default 100 | quote }}
+  RESOURCE_MAX_VERSIONS_PER_MODEL: {{ .Values.config.resources.maxVersionsPerModel | default 50 | quote }}
+  RESOURCE_MAX_UPLOAD_SIZE_MB: {{ .Values.config.resources.maxUploadSizeMB | default 10240 | quote }}
+  RESOURCE_MAX_REQUEST_SIZE_MB: {{ .Values.config.resources.maxRequestSizeMB | default 100 | quote }}
+
+  # Session Configuration
+  SESSION_ENABLED: {{ .Values.config.session.enabled | default true | quote }}
+  SESSION_TIMEOUT: {{ .Values.config.session.timeout | default 1800 | quote }}
+  SESSION_MAX_PER_USER: {{ .Values.config.session.maxPerUser | default 5 | quote }}
+
+  # Audit Configuration
+  AUDIT_ENABLED: {{ .Values.config.audit.enabled | default true | quote }}
+  AUDIT_LOG_PATH: {{ .Values.config.audit.logPath | default "/var/log/ai-provider/audit.log" | quote }}
+  AUDIT_MAX_SIZE_MB: {{ .Values.config.audit.maxSizeMB | default 100 | quote }}
+  AUDIT_MAX_BACKUPS: {{ .Values.config.audit.maxBackups | default 10 | quote }}
+  AUDIT_MAX_AGE_DAYS: {{ .Values.config.audit.maxAgeDays | default 365 | quote }}
+
+  # Notification Configuration
+  NOTIFICATION_ENABLED: {{ .Values.config.notifications.enabled | default true | quote }}
+  NOTIFICATION_EMAIL_ENABLED: {{ .Values.config.notifications.email.enabled | default true | quote }}
+  NOTIFICATION_SLACK_ENABLED: {{ .Values.config.notifications.slack.enabled | default false | quote }}
+
+  # Analytics Configuration
+  ANALYTICS_ENABLED: {{ .Values.config.analytics.enabled | default true | quote }}
+  ANALYTICS_FLUSH_INTERVAL: {{ .Values.config.analytics.flushInterval | default 60 | quote }}
+  ANALYTICS_BATCH_SIZE: {{ .Values.config.analytics.batchSize | default 100 | quote }}
+
+  # Cost Management Configuration
+  COST_TRACKING_ENABLED: {{ .Values.config.costTracking.enabled | default true | quote }}
+  COST_ALERT_THRESHOLD: {{ .Values.config.costTracking.alertThreshold | default 1000 | quote }}
+  COST_BUDGET_PERIOD: {{ .Values.config.costTracking.budgetPeriod | default "monthly" | quote }}
+
+  # Alerting Configuration
+  ALERTING_ENABLED: {{ .Values.config.alerting.enabled | default true | quote }}
+  ALERTING_COOLDOWN: {{ .Values.config.alerting.cooldown | default 300 | quote }}
+  ALERTING_MAX_ALERTS: {{ .Values.config.alerting.maxAlerts | default 100 | quote }}
+
+  # Dashboard Configuration
+  DASHBOARD_ENABLED: {{ .Values.config.dashboard.enabled | default true | quote }}
+  DASHBOARD_REFRESH_INTERVAL: {{ .Values.config.dashboard.refreshInterval | default 30 | quote }}
+
+  # Workspace Configuration
+  WORKSPACE_ENABLED: {{ .Values.config.workspace.enabled | default true | quote }}
+  WORKSPACE_MAX_PER_ORG: {{ .Values.config.workspace.maxPerOrg | default 100 | quote }}
+
+  # Usage Tracking Configuration
+  USAGE_TRACKING_ENABLED: {{ .Values.config.usageTracking.enabled | default true | quote }}
+  USAGE_AGGREGATION_INTERVAL: {{ .Values.config.usageTracking.aggregationInterval | default 3600 | quote }}
+
+  # Kubernetes-specific Configuration
+  KUBERNETES_NAMESPACE: {{ .Release.Namespace | quote }}
+  KUBERNETES_POD_NAME: "{{ "{{" }}.PodName{{ "}}" }}"
+  KUBERNETES_NODE_NAME: "{{ "{{" }}.NodeName{{ "}}" }}"
+
+  # Environment identifier
+  ENVIRONMENT: {{ .Values.global.environment | default "production" | quote }}
+
+  # Release information
+  HELM_RELEASE_NAME: {{ .Release.Name | quote }}
+  HELM_RELEASE_NAMESPACE: {{ .Release.Namespace | quote }}
+  HELM_CHART_VERSION: {{ .Chart.Version | quote }}
+  HELM_APP_VERSION: {{ .Chart.AppVersion | quote }}
+
+---
+{{- if .Values.serviceMesh.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ai-provider.fullname" . }}-envoy-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: envoy
+data:
+  envoy.yaml: |
+    static_resources:
+      listeners:
+      - name: listener_0
+        address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 8080
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: ingress_http
+              route_config:
+                name: local_route
+                virtual_hosts:
+                - name: local_service
+                  domains: ["*"]
+                  routes:
+                  - match:
+                      prefix: "/api/v1"
+                    route:
+                      cluster: ai_provider_service
+                      timeout: 300s
+                  - match:
+                      prefix: "/health"
+                    route:
+                      cluster: ai_provider_service
+              http_filters:
+              - name: envoy.filters.http.router
+      clusters:
+      - name: ai_provider_service
+        type: STATIC
+        connect_timeout: 10s
+        lb_policy: ROUND_ROBIN
+        load_assignment:
+          cluster_name: ai_provider_service
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: 127.0.0.1
+                    port_value: 8081
+    admin:
+      access_log_path: "/dev/stdout"
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
+{{- end }}
+
+---
+{{- if and .Values.sidecars.logCollector.enabled .Values.sidecars.logCollector.config }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ai-provider.fullname" . }}-fluent-bit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-provider.labels" . | nindent 4 }}
+    app.kubernetes.io/component: logging
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+    @INCLUDE input-kubernetes.conf
+    @INCLUDE filter-kubernetes.conf
+    @INCLUDE output-elasticsearch.conf
+
+  input-kubernetes.conf: |
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/ai-provider/*.log
+        Parser            json
+        DB                /var/log/flb_kube.db
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+
+  filter-kubernetes.conf: |
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude On
+
+  output-elasticsearch.conf: |
+    [OUTPUT]
+        Name            es
+        Match           *
+        Host            elasticsearch
+        Port            9200
+        Logstash_Format On
+        Retry_Limit     False
+
+  parsers.conf: |
+    [PARSER]
+        Name        json
+        Format      json
+        Time_Key    time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+{{- end }}
+{{- end }}

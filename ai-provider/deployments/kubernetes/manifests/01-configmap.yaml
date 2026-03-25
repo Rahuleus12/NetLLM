@@ -1,0 +1,248 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-provider-config
+  namespace: ai-provider
+  labels:
+    app: ai-provider
+    component: config
+    version: v1.0.0
+data:
+  # Application Configuration
+  APP_NAME: "ai-provider"
+  APP_VERSION: "1.0.0"
+  APP_ENV: "production"
+
+  # Server Configuration
+  SERVER_HOST: "0.0.0.0"
+  SERVER_PORT: "8080"
+  SERVER_READ_TIMEOUT: "30"
+  SERVER_WRITE_TIMEOUT: "30"
+  SERVER_IDLE_TIMEOUT: "60"
+  SERVER_MAX_HEADER_BYTES: "1048576"
+
+  # API Configuration
+  API_BASE_PATH: "/api/v1"
+  API_RATE_LIMIT: "100"
+  API_RATE_BURST: "200"
+  API_CORS_ENABLED: "true"
+  API_CORS_ORIGINS: "*"
+
+  # Database Configuration (non-sensitive)
+  DB_HOST: "postgresql-service"
+  DB_PORT: "5432"
+  DB_NAME: "ai_provider"
+  DB_SSLMODE: "require"
+  DB_MAX_CONNECTIONS: "50"
+  DB_MAX_IDLE: "10"
+  DB_CONN_TIMEOUT: "30"
+
+  # Redis Configuration (non-sensitive)
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_POOL_SIZE: "100"
+  REDIS_MIN_IDLE: "20"
+
+  # Model Storage Configuration
+  MODEL_STORAGE_PATH: "/data/models"
+  MODEL_CACHE_PATH: "/data/cache"
+  MODEL_TEMP_PATH: "/tmp/models"
+  MODEL_MAX_SIZE_GB: "500"
+  MODEL_DOWNLOAD_THREADS: "4"
+  MODEL_DOWNLOAD_TIMEOUT: "3600"
+  MODEL_VALIDATION_ENABLED: "true"
+
+  # Inference Configuration
+  INFERENCE_ENABLED: "true"
+  INFERENCE_MAX_CONCURRENT: "10"
+  INFERENCE_TIMEOUT: "300"
+  INFERENCE_BATCH_SIZE: "8"
+  INFERENCE_GPU_ENABLED: "true"
+  INFERENCE_GPU_MEMORY_FRACTION: "0.8"
+  INFERENCE_CPU_THREADS: "8"
+
+  # Monitoring Configuration
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  METRICS_PATH: "/metrics"
+  HEALTH_ENABLED: "true"
+  HEALTH_PATH: "/health"
+  HEALTH_PORT: "8080"
+
+  # Logging Configuration
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  LOG_OUTPUT: "stdout"
+  LOG_INCLUDE_CALLER: "true"
+  LOG_INCLUDE_TIMESTAMP: "true"
+
+  # Security Configuration (non-sensitive)
+  SECURITY_ENABLED: "true"
+  SECURITY_AUTH_REQUIRED: "true"
+  SECURITY_JWT_ISSUER: "ai-provider"
+  SECURITY_JWT_EXPIRY: "3600"
+  SECURITY_REFRESH_EXPIRY: "604800"
+  SECURITY_BCRYPT_COST: "12"
+  SECURITY_RATE_LIMIT_ENABLED: "true"
+
+  # Multi-tenancy Configuration
+  TENANCY_ENABLED: "true"
+  TENANCY_MAX_ORGS: "1000"
+  TENANCY_MAX_USERS_PER_ORG: "500"
+  TENANCY_DEFAULT_QUOTA: "1000000"
+
+  # Plugin Configuration
+  PLUGIN_ENABLED: "true"
+  PLUGIN_PATH: "/plugins"
+  PLUGIN_MAX_PLUGINS: "100"
+  PLUGIN_SANDBOX_ENABLED: "true"
+
+  # Integration Configuration
+  INTEGRATION_ENABLED: "true"
+  INTEGRATION_TIMEOUT: "30"
+  INTEGRATION_RETRY_COUNT: "3"
+  INTEGRATION_RETRY_DELAY: "5"
+
+  # Webhook Configuration
+  WEBHOOK_ENABLED: "true"
+  WEBHOOK_TIMEOUT: "10"
+  WEBHOOK_RETRY_COUNT: "3"
+  WEBHOOK_MAX_EVENTS: "10000"
+
+  # Backup Configuration
+  BACKUP_ENABLED: "true"
+  BACKUP_PATH: "/backups"
+  BACKUP_SCHEDULE: "0 2 * * *"
+  BACKUP_RETENTION_DAYS: "30"
+  BACKUP_COMPRESSION: "gzip"
+
+  # Maintenance Configuration
+  MAINTENANCE_MODE: "false"
+  MAINTENANCE_MESSAGE: "System under maintenance"
+
+  # Feature Flags
+  FEATURE_BATCH_INFERENCE: "true"
+  FEATURE_STREAMING_INFERENCE: "true"
+  FEATURE_GPU_ACCELERATION: "true"
+  FEATURE_MULTI_REGION: "false"
+  FEATURE_ANALYTICS: "true"
+  FEATURE_BILLING: "true"
+
+  # Performance Tuning
+  PERF_MAX_GOROUTINES: "10000"
+  PERF_CHAN_BUFFER_SIZE: "1000"
+  PERF_GC_PERCENT: "100"
+  PERF_MEMORY_LIMIT_MB: "4096"
+
+  # Resource Limits
+  RESOURCE_MAX_MODELS: "100"
+  RESOURCE_MAX_VERSIONS_PER_MODEL: "50"
+  RESOURCE_MAX_UPLOAD_SIZE_MB: "10240"
+  RESOURCE_MAX_REQUEST_SIZE_MB: "100"
+
+  # Session Configuration
+  SESSION_ENABLED: "true"
+  SESSION_TIMEOUT: "1800"
+  SESSION_MAX_PER_USER: "5"
+
+  # Audit Configuration
+  AUDIT_ENABLED: "true"
+  AUDIT_LOG_PATH: "/var/log/ai-provider/audit.log"
+  AUDIT_MAX_SIZE_MB: "100"
+  AUDIT_MAX_BACKUPS: "10"
+  AUDIT_MAX_AGE_DAYS: "365"
+
+  # Notification Configuration
+  NOTIFICATION_ENABLED: "true"
+  NOTIFICATION_EMAIL_ENABLED: "true"
+  NOTIFICATION_SLACK_ENABLED: "false"
+
+  # Analytics Configuration
+  ANALYTICS_ENABLED: "true"
+  ANALYTICS_FLUSH_INTERVAL: "60"
+  ANALYTICS_BATCH_SIZE: "100"
+
+  # Cost Management Configuration
+  COST_TRACKING_ENABLED: "true"
+  COST_ALERT_THRESHOLD: "1000"
+  COST_BUDGET_PERIOD: "monthly"
+
+  # Alerting Configuration
+  ALERTING_ENABLED: "true"
+  ALERTING_COOLDOWN: "300"
+  ALERTING_MAX_ALERTS: "100"
+
+  # Dashboard Configuration
+  DASHBOARD_ENABLED: "true"
+  DASHBOARD_REFRESH_INTERVAL: "30"
+
+  # Workspace Configuration
+  WORKSPACE_ENABLED: "true"
+  WORKSPACE_MAX_PER_ORG: "100"
+
+  # Usage Tracking Configuration
+  USAGE_TRACKING_ENABLED: "true"
+  USAGE_AGGREGATION_INTERVAL: "3600"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-provider-envoy-config
+  namespace: ai-provider
+  labels:
+    app: ai-provider
+    component: envoy
+data:
+  envoy.yaml: |
+    static_resources:
+      listeners:
+      - name: listener_0
+        address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 8080
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: ingress_http
+              route_config:
+                name: local_route
+                virtual_hosts:
+                - name: local_service
+                  domains: ["*"]
+                  routes:
+                  - match:
+                      prefix: "/api/v1"
+                    route:
+                      cluster: ai_provider_service
+                      timeout: 300s
+                  - match:
+                      prefix: "/health"
+                    route:
+                      cluster: ai_provider_service
+              http_filters:
+              - name: envoy.filters.http.router
+      clusters:
+      - name: ai_provider_service
+        type: STATIC
+        connect_timeout: 10s
+        lb_policy: ROUND_ROBIN
+        load_assignment:
+          cluster_name: ai_provider_service
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: 127.0.0.1
+                    port_value: 8081
+    admin:
+      access_log_path: "/dev/stdout"
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
