@@ -1,0 +1,905 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AI Provider - Monitoring Infrastructure
+
+  This template creates comprehensive monitoring infrastructure:
+  - CloudWatch dashboards for visualization
+  - CloudWatch alarms for alerting
+  - SNS topics for notifications
+  - Log groups for centralized logging
+  - Metric filters for custom metrics
+  - Anomaly detection for proactive monitoring
+
+  Author: AI Provider Platform Team
+  Version: 1.0.0'
+
+Metadata:
+  License: MIT
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'General Configuration'
+        Parameters:
+          - ProjectName
+          - Environment
+          - Owner
+      - Label:
+          default: 'Resource Configuration'
+        Parameters:
+          - EksClusterName
+          - RdsInstanceId
+          - ElastiCacheClusterId
+      - Label:
+          default: 'Monitoring Configuration'
+        Parameters:
+          - EnableCloudWatchAlarms
+          - EnableCloudWatchDashboard
+          - CloudWatchLogRetentionDays
+          - AlertEmailAddresses
+      - Label:
+          default: 'Threshold Configuration'
+        Parameters:
+          - CpuThresholdPercent
+          - MemoryThresholdPercent
+          - DiskThresholdPercent
+          - ErrorRateThreshold
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'ai-provider'
+    Description: 'Name of the project'
+    AllowedPattern: '^[a-z0-9-]+$'
+    ConstraintDescription: 'Must contain only lowercase letters, numbers, and hyphens'
+
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  Owner:
+    Type: String
+    Default: 'DevOps'
+    Description: 'Owner of the resources'
+
+  EksClusterName:
+    Type: String
+    Description: 'EKS cluster name'
+    Default: ''
+
+  RdsInstanceId:
+    Type: String
+    Description: 'RDS instance identifier'
+    Default: ''
+
+  ElastiCacheClusterId:
+    Type: String
+    Description: 'ElastiCache cluster ID'
+    Default: ''
+
+  EnableCloudWatchAlarms:
+    Type: String
+    Default: 'true'
+    Description: 'Enable CloudWatch alarms'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableCloudWatchDashboard:
+    Type: String
+    Default: 'true'
+    Description: 'Enable CloudWatch dashboard'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  CloudWatchLogRetentionDays:
+    Type: Number
+    Default: 30
+    Description: 'Number of days to retain CloudWatch logs'
+    AllowedValues:
+      - 1
+      - 3
+      - 5
+      - 7
+      - 14
+      - 30
+      - 60
+      - 90
+      - 120
+      - 150
+      - 180
+      - 365
+      - 400
+      - 545
+      - 731
+      - 1827
+      - 3653
+
+  AlertEmailAddresses:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: 'Email addresses for alerts (comma-separated)'
+
+  CpuThresholdPercent:
+    Type: Number
+    Default: 80
+    Description: 'CPU usage threshold for alarms (percentage)'
+    MinValue: 50
+    MaxValue: 100
+
+  MemoryThresholdPercent:
+    Type: Number
+    Default: 80
+    Description: 'Memory usage threshold for alarms (percentage)'
+    MinValue: 50
+    MaxValue: 100
+
+  DiskThresholdPercent:
+    Type: Number
+    Default: 85
+    Description: 'Disk usage threshold for alarms (percentage)'
+    MinValue: 50
+    MaxValue: 100
+
+  ErrorRateThreshold:
+    Type: Number
+    Default: 5
+    Description: 'Error rate threshold for alarms (percentage)'
+    MinValue: 1
+    MaxValue: 100
+
+Conditions:
+  CreateAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
+  CreateDashboard: !Equals [!Ref EnableCloudWatchDashboard, 'true']
+  HasEksCluster: !Not [!Equals [!Ref EksClusterName, '']]
+  HasRdsInstance: !Not [!Equals [!Ref RdsInstanceId, '']]
+  HasElastiCacheCluster: !Not [!Equals [!Ref ElastiCacheClusterId, '']]
+  HasAlertEmails: !Not [!Equals [!Join ['', !Ref AlertEmailAddresses], '']]
+
+Resources:
+  # ==============================================================================
+  # SNS Topics for Alerts
+  # ==============================================================================
+
+  CriticalAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-critical-alerts'
+      DisplayName: !Sub '${ProjectName} ${Environment} - Critical Alerts'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-critical-alerts'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Severity
+          Value: critical
+
+  WarningAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-warning-alerts'
+      DisplayName: !Sub '${ProjectName} ${Environment} - Warning Alerts'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-warning-alerts'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Severity
+          Value: warning
+
+  InfoAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-info-alerts'
+      DisplayName: !Sub '${ProjectName} ${Environment} - Info Alerts'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-info-alerts'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Severity
+          Value: info
+
+  # SNS Subscriptions
+  CriticalEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmails
+    Properties:
+      TopicArn: !Ref CriticalAlertsTopic
+      Protocol: email
+      Endpoint: !Select [0, !Ref AlertEmailAddresses]
+
+  WarningEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmails
+    Properties:
+      TopicArn: !Ref WarningAlertsTopic
+      Protocol: email
+      Endpoint: !Select [0, !Ref AlertEmailAddresses]
+
+  # ==============================================================================
+  # CloudWatch Log Groups
+  # ==============================================================================
+
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/${ProjectName}/${Environment}/application'
+      RetentionInDays: !Ref CloudWatchLogRetentionDays
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-application-logs'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AuthLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/${ProjectName}/${Environment}/auth'
+      RetentionInDays: !Ref CloudWatchLogRetentionDays
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-auth-logs'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AuditLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/${ProjectName}/${Environment}/audit'
+      RetentionInDays: 90
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-audit-logs'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/${ProjectName}-${Environment}'
+      RetentionInDays: !Ref CloudWatchLogRetentionDays
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-api-gateway-logs'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # Metric Filters
+  # ==============================================================================
+
+  ErrorMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApplicationLogGroup
+      FilterPattern: '[timestamp, level, message, ERROR=*]'
+      MetricTransformations:
+        - MetricName: ErrorCount
+          MetricNamespace: !Sub '${ProjectName}/${Environment}/Application'
+          MetricValue: '1'
+          Unit: Count
+
+  WarningMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApplicationLogGroup
+      FilterPattern: '[timestamp, level, message, WARN=*]'
+      MetricTransformations:
+        - MetricName: WarningCount
+          MetricNamespace: !Sub '${ProjectName}/${Environment}/Application'
+          MetricValue: '1'
+          Unit: Count
+
+  AuthFailureMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref AuthLogGroup
+      FilterPattern: '[timestamp, level, message, AUTH_FAILED=*]'
+      MetricTransformations:
+        - MetricName: AuthFailureCount
+          MetricNamespace: !Sub '${ProjectName}/${Environment}/Security'
+          MetricValue: '1'
+          Unit: Count
+
+  # ==============================================================================
+  # CloudWatch Dashboard
+  # ==============================================================================
+
+  MainDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Condition: CreateDashboard
+    Properties:
+      DashboardName: !Sub '${ProjectName}-${Environment}-main'
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 0,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "EKS Cluster - CPU & Memory",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "metrics": [
+                    ["AWS/ContainerInsights", "cluster_cpu_utilization", "ClusterName", "${EksCluster}", {"stat": "Average", "period": 300}],
+                    [".", "cluster_memory_utilization", ".", ".", {"stat": "Average", "period": 300}]
+                  ],
+                  "region": "${AWS::Region}"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 0,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "RDS - Performance",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "metrics": [
+                    ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "${RdsInstance}", {"stat": "Average", "period": 300}],
+                    [".", "FreeableMemory", ".", ".", {"stat": "Average", "period": 300}],
+                    [".", "ReadIOPS", ".", ".", {"stat": "Average", "period": 300}],
+                    [".", "WriteIOPS", ".", ".", {"stat": "Average", "period": 300}]
+                  ],
+                  "region": "${AWS::Region}"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 6,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "ElastiCache - Redis Performance",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "metrics": [
+                    ["AWS/ElastiCache", "CPUUtilization", "CacheClusterId", "${CacheCluster}", {"stat": "Average", "period": 300}],
+                    [".", "FreeableMemory", ".", ".", {"stat": "Average", "period": 300}],
+                    [".", "CacheHits", ".", ".", {"stat": "Sum", "period": 300}],
+                    [".", "CacheMisses", ".", ".", {"stat": "Sum", "period": 300}]
+                  ],
+                  "region": "${AWS::Region}"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 6,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "Application - Errors & Warnings",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "metrics": [
+                    ["${ProjectName}/${Environment}/Application", "ErrorCount", {"stat": "Sum", "period": 300}],
+                    [".", "WarningCount", {"stat": "Sum", "period": 300}]
+                  ],
+                  "region": "${AWS::Region}"
+                }
+              },
+              {
+                "type": "log",
+                "x": 0,
+                "y": 12,
+                "width": 24,
+                "height": 6,
+                "properties": {
+                  "title": "Recent Errors",
+                  "view": "table",
+                  "region": "${AWS::Region}",
+                  "logGroupNames": ["${ApplicationLogGroup}"],
+                  "query": "fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20"
+                }
+              }
+            ]
+          }
+        - EksCluster: !If [HasEksCluster, !Ref EksClusterName, 'N/A']
+          RdsInstance: !If [HasRdsInstance, !Ref RdsInstanceId, 'N/A']
+          CacheCluster: !If [HasElastiCacheCluster, !Ref ElastiCacheClusterId, 'N/A']
+          ApplicationLogGroup: !Ref ApplicationLogGroup
+
+  # ==============================================================================
+  # EKS CloudWatch Alarms
+  # ==============================================================================
+
+  EksCpuHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: And [CreateAlarms, HasEksCluster]
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-eks-cpu-high'
+      AlarmDescription: 'EKS cluster CPU utilization is high'
+      Namespace: AWS/ContainerInsights
+      MetricName: cluster_cpu_utilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref EksClusterName
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref CpuThresholdPercent
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-eks-cpu-high-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  EksMemoryHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: And [CreateAlarms, HasEksCluster]
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-eks-memory-high'
+      AlarmDescription: 'EKS cluster memory utilization is high'
+      Namespace: AWS/ContainerInsights
+      MetricName: cluster_memory_utilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref EksClusterName
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref MemoryThresholdPercent
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-eks-memory-high-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  EksNodeCountLowAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: And [CreateAlarms, HasEksCluster]
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-eks-node-count-low'
+      AlarmDescription: 'EKS cluster has less than 2 nodes running'
+      Namespace: AWS/ContainerInsights
+      MetricName: cluster_node_count
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref EksClusterName
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 2
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-eks-node-count-low-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==============================================================================
+  # RDS CloudWatch Alarms
+  # ==============================================================================
+
+  RdsCpuHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: And [CreateAlarms, HasRdsInstance]
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-rds-cpu-high'
+      AlarmDescription: 'RDS CPU utilization is high'
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RdsInstanceId
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref CpuThresholdPercent
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-cpu-high-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  RdsMemoryLowAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: And [CreateAlarms, HasRdsInstance]
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-rds-memory-low'
+      AlarmDescription: 'RDS freeable memory is low'
+      Namespace: AWS/RDS
+      MetricName: FreeableMemory
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RdsInstanceId
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 268435456
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-memory-low-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  RdsStorageLowAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: And [CreateAlarms, HasRdsInstance]
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-rds-storage-low'
+      AlarmDescription: 'RDS free storage space is low'
+      Namespace: AWS/RDS
+      MetricName: FreeStorageSpace
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RdsInstanceId
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 5368709120
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-storage-low-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  RdsConnectionCountHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: And [CreateAlarms, HasRdsInstance]
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-rds-connections-high'
+      AlarmDescription: 'RDS database connections are high'
+      Namespace: AWS/RDS
+      MetricName: DatabaseConnections
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RdsInstanceId
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 400
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref WarningAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-connections-high-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==============================================================================
+  # ElastiCache CloudWatch Alarms
+  # ==============================================================================
+
+  ElastiCacheCpuHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: And [CreateAlarms, HasElastiCacheCluster]
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-elasticache-cpu-high'
+      AlarmDescription: 'ElastiCache CPU utilization is high'
+      Namespace: AWS/ElastiCache
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: CacheClusterId
+          Value: !Ref ElastiCacheClusterId
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref CpuThresholdPercent
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-elasticache-cpu-high-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  ElastiCacheMemoryLowAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: And [CreateAlarms, HasElastiCacheCluster]
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-elasticache-memory-low'
+      AlarmDescription: 'ElastiCache freeable memory is low'
+      Namespace: AWS/ElastiCache
+      MetricName: FreeableMemory
+      Dimensions:
+        - Name: CacheClusterId
+          Value: !Ref ElastiCacheClusterId
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 134217728
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-elasticache-memory-low-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  ElastiCacheEvictionsHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: And [CreateAlarms, HasElastiCacheCluster]
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-elasticache-evictions-high'
+      AlarmDescription: 'ElastiCache evictions are high'
+      Namespace: AWS/ElastiCache
+      MetricName: Evictions
+      Dimensions:
+        - Name: CacheClusterId
+          Value: !Ref ElastiCacheClusterId
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 1000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref WarningAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-elasticache-evictions-high-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==============================================================================
+  # Application CloudWatch Alarms
+  # ==============================================================================
+
+  ApplicationErrorRateHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateAlarms
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-app-error-rate-high'
+      AlarmDescription: !Sub 'Application error rate is above ${ErrorRateThreshold}%'
+      Namespace: !Sub '${ProjectName}/${Environment}/Application'
+      MetricName: ErrorCount
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref ErrorRateThreshold
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-app-error-rate-high-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  AuthFailuresHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateAlarms
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-auth-failures-high'
+      AlarmDescription: 'Authentication failures are high'
+      Namespace: !Sub '${ProjectName}/${Environment}/Security'
+      MetricName: AuthFailureCount
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-auth-failures-high-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==============================================================================
+  # Composite Alarms
+  # ==============================================================================
+
+  SystemHealthCompositeAlarm:
+    Type: AWS::CloudWatch::CompositeAlarm
+    Condition: CreateAlarms
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-system-health'
+      AlarmDescription: 'Composite alarm for overall system health'
+      AlarmRule: !Sub
+        - |
+          {
+            "Or": [
+              {"Alarm": {"AlarmName": "${EksCpuAlarm}", "Region": "${AWS::Region}"}},
+              {"Alarm": {"AlarmName": "${EksMemoryAlarm}", "Region": "${AWS::Region}"}},
+              {"Alarm": {"AlarmName": "${RdsCpuAlarm}", "Region": "${AWS::Region}"}},
+              {"Alarm": {"AlarmName": "${CacheCpuAlarm}", "Region": "${AWS::Region}"}}
+            ]
+          }
+        - EksCpuAlarm: !Ref EksCpuHighAlarm
+          EksMemoryAlarm: !Ref EksMemoryHighAlarm
+          RdsCpuAlarm: !Ref RdsCpuHighAlarm
+          CacheCpuAlarm: !Ref ElastiCacheCpuHighAlarm
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref CriticalAlertsTopic
+      OKActions:
+        - !Ref InfoAlertsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-system-health-composite-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  CriticalAlertsTopicArn:
+    Description: 'ARN of SNS topic for critical alerts'
+    Value: !Ref CriticalAlertsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-CriticalAlertsTopicArn'
+
+  WarningAlertsTopicArn:
+    Description: 'ARN of SNS topic for warning alerts'
+    Value: !Ref WarningAlertsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-WarningAlertsTopicArn'
+
+  InfoAlertsTopicArn:
+    Description: 'ARN of SNS topic for informational alerts'
+    Value: !Ref InfoAlertsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-InfoAlertsTopicArn'
+
+  DashboardName:
+    Description: 'Name of CloudWatch dashboard'
+    Value: !If [CreateDashboard, !Ref MainDashboard, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardName'
+
+  ApplicationLogGroupName:
+    Description: 'Name of application log group'
+    Value: !Ref ApplicationLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ApplicationLogGroupName'
+
+  AuthLogGroupName:
+    Description: 'Name of auth log group'
+    Value: !Ref AuthLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-AuthLogGroupName'
+
+  AuditLogGroupName:
+    Description: 'Name of audit log group'
+    Value: !Ref AuditLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-AuditLogGroupName'
+
+  SnsTopicArn:
+    Description: 'ARN of primary SNS topic for alerts'
+    Value: !Ref CriticalAlertsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-SnsTopicArn'
+
+  MonitoringSummary:
+    Description: 'Monitoring infrastructure summary'
+    Value: !Sub |
+      ========================================================================
+      Monitoring Infrastructure Summary
+      ========================================================================
+
+      Project:        ${ProjectName}
+      Environment:    ${Environment}
+
+      ------------------------------------------------------------------------
+      SNS Topics
+      ------------------------------------------------------------------------
+      Critical Alerts: ${CriticalAlertsTopic}
+      Warning Alerts:  ${WarningAlertsTopic}
+      Info Alerts:     ${InfoAlertsTopic}
+
+      ------------------------------------------------------------------------
+      Log Groups
+      ------------------------------------------------------------------------
+      Application:     ${ApplicationLogGroup}
+      Authentication:  ${AuthLogGroup}
+      Audit:          ${AuditLogGroup}
+      API Gateway:    ${ApiGatewayLogGroup}
+
+      Retention:      ${CloudWatchLogRetentionDays} days
+
+      ------------------------------------------------------------------------
+      CloudWatch Dashboard
+      ------------------------------------------------------------------------
+      Dashboard:      ${MainDashboard}
+
+      ------------------------------------------------------------------------
+      Alarms Configured
+      ------------------------------------------------------------------------
+      EKS Alarms:
+        - CPU High:        ${EksCpuHighAlarm}
+        - Memory High:     ${EksMemoryHighAlarm}
+        - Node Count Low:  ${EksNodeCountLowAlarm}
+
+      RDS Alarms:
+        - CPU High:        ${RdsCpuHighAlarm}
+        - Memory Low:      ${RdsMemoryLowAlarm}
+        - Storage Low:     ${RdsStorageLowAlarm}
+        - Connections High: ${RdsConnectionCountHighAlarm}
+
+      ElastiCache Alarms:
+        - CPU High:        ${ElastiCacheCpuHighAlarm}
+        - Memory Low:      ${ElastiCacheMemoryLowAlarm}
+        - Evictions High:  ${ElastiCacheEvictionsHighAlarm}
+
+      Application Alarms:
+        - Error Rate High: ${ApplicationErrorRateHighAlarm}
+        - Auth Failures:   ${AuthFailuresHighAlarm}
+
+      Composite Alarms:
+        - System Health:   ${SystemHealthCompositeAlarm}
+
+      ========================================================================

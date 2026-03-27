@@ -1,0 +1,356 @@
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: ai-provider
+  namespace: ai-provider
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: helm-release
+    app.kubernetes.io/part-of: ai-provider-platform
+    app.kubernetes.io/managed-by: flux
+  annotations:
+    description: "Flux HelmRelease for AI Provider Platform"
+    fluxcd.io/automated: "true"
+    fluxcd.io/tag.chart-image: semver:*
+spec:
+  # Release name defaults to metadata.name if not specified
+  releaseName: ai-provider
+
+  # Target namespace for the release
+  targetNamespace: ai-provider
+
+  # How often to check for updates
+  interval: 5m
+
+  # Timeout for installation and upgrades
+  timeout: 10m
+
+  # Chart configuration
+  chart:
+    spec:
+      # Chart source from GitRepository
+      sourceRef:
+        kind: GitRepository
+        name: ai-provider
+        namespace: flux-system
+
+      # Path to the Helm chart within the repository
+      chart: deployments/kubernetes/helm
+
+      # Chart version (use semver range or specific version)
+      version: '1.0.x'
+
+      # Reconcile strategy
+      reconcileStrategy: Revision
+
+      # Verify chart integrity (optional)
+      verify:
+        provider: cosign
+
+      # Interval for checking chart updates
+      interval: 5m
+
+  # Installation configuration
+  install:
+    # Create namespace if it doesn't exist
+    createNamespace: true
+
+    # Remediation strategy on failure
+    remediation:
+      # Number of retries before giving up
+      retries: 3
+
+      # Strategy: rollback, uninstall, or none
+      strategy: rollback
+
+      # Rollback configuration
+      rollback:
+        # Number of revisions to keep
+        cleanupOnFail: true
+        # Force resource deletion on rollback
+        force: false
+
+    # Disable webhook during installation
+    disableWebhooks: false
+
+    # Disable openAPI validation
+    disableOpenAPIValidation: false
+
+    # Replace existing release if needed
+    replace: false
+
+  # Upgrade configuration
+  upgrade:
+    # Force resource updates
+    force: false
+
+    # Remediation strategy on failure
+    remediation:
+      # Number of retries before giving up
+      retries: 3
+
+      # Strategy: rollback or uninstall
+      strategy: rollback
+
+      # Rollback configuration
+      rollback:
+        cleanupOnFail: true
+        force: false
+
+      # Remedy on failure
+      onFailure: rollback
+
+    # Preserve values on upgrade
+    preserveValues: true
+
+    # Cleanup on failure
+    cleanupOnFail: true
+
+    # Disable webhook during upgrade
+    disableWebhooks: false
+
+    # Max history to keep
+    maxHistory: 10
+
+  # Rollback configuration
+  rollback:
+    # Enable automatic rollback
+    enable: true
+
+    # Number of retries
+    retries: 3
+
+    # Cleanup on failure
+    cleanupOnFail: true
+
+    # Force resource updates
+    force: false
+
+    # Timeout for rollback operation
+    timeout: 5m
+
+    # Wait for rollback to complete
+    wait: true
+
+    # Wait for resources to be ready
+    waitForJobs: true
+
+  # Test configuration
+  test:
+    # Enable Helm tests
+    enable: true
+
+    # Ignore test failures (don't mark release as failed)
+    ignoreFailures: false
+
+    # Timeout for tests
+    timeout: 5m
+
+  # Values to override the Helm chart defaults
+  values:
+    # Global settings
+    global:
+      namespace: ai-provider
+      environment: production
+      imageRegistry: ""
+      storageClass: ""
+
+    # Number of replicas
+    replicaCount: 3
+
+    # Container image
+    image:
+      repository: ai-provider
+      tag: "1.0.0"
+      pullPolicy: IfNotPresent
+
+    # Service account
+    serviceAccount:
+      create: true
+      name: ai-provider-service-account
+
+    # Security contexts
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      port: 8080
+      metricsPort: 9090
+
+    # Ingress configuration
+    ingress:
+      enabled: true
+      className: nginx
+      annotations:
+        kubernetes.io/ingress.class: nginx
+        nginx.ingress.kubernetes.io/ssl-redirect: "true"
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+      hosts:
+        - host: api.ai-provider.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls:
+        - secretName: ai-provider-tls-secret
+          hosts:
+            - api.ai-provider.example.com
+
+    # Resource limits
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+
+    # Horizontal Pod Autoscaler
+    autoscaling:
+      enabled: true
+      minReplicas: 3
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+
+    # PostgreSQL configuration
+    postgresql:
+      enabled: true
+      auth:
+        username: ai_admin
+        database: ai_provider
+      primary:
+        persistence:
+          enabled: true
+          size: 20Gi
+
+    # Redis configuration
+    redis:
+      enabled: true
+      auth:
+        enabled: true
+      master:
+        persistence:
+          enabled: true
+          size: 10Gi
+
+    # Monitoring
+    monitoring:
+      serviceMonitor:
+        enabled: true
+        interval: 30s
+      prometheusRules:
+        enabled: true
+      grafanaDashboards:
+        enabled: true
+
+    # Network policies
+    networkPolicy:
+      enabled: true
+
+    # Backup configuration
+    backup:
+      enabled: true
+      schedule: "0 2 * * *"
+      retentionDays: 30
+
+    # Persistence
+    persistence:
+      models:
+        enabled: true
+        size: 500Gi
+        storageClass: fast-ssd
+      cache:
+        enabled: true
+        size: 100Gi
+        storageClass: fast-ssd
+      audit:
+        enabled: true
+        size: 50Gi
+      backup:
+        enabled: true
+        size: 200Gi
+
+    # Probes
+    probes:
+      liveness:
+        enabled: true
+        path: /health/live
+      readiness:
+        enabled: true
+        path: /health/ready
+      startup:
+        enabled: true
+        path: /health/startup
+
+  # Values from external sources (optional)
+  valuesFrom:
+    # ConfigMap with custom values
+    - kind: ConfigMap
+      name: ai-provider-custom-values
+      valuesKey: values.yaml
+      optional: true
+
+    # Secret with sensitive values
+    - kind: Secret
+      name: ai-provider-secrets
+      valuesKey: values.yaml
+      optional: true
+
+  # Health checks
+  healthChecks:
+    # Pod health
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: ai-provider
+      namespace: ai-provider
+      interval: 30s
+      timeout: 5m
+      healthyThreshold: 1
+      unhealthyThreshold: 3
+
+    # Database health
+    - apiVersion: apps/v1
+      kind: StatefulSet
+      name: postgres
+      namespace: ai-provider
+      interval: 30s
+      timeout: 5m
+      healthyThreshold: 1
+      unhealthyThreshold: 3
+
+    # Redis health
+    - apiVersion: apps/v1
+      kind: StatefulSet
+      name: redis
+      namespace: ai-provider
+      interval: 30s
+      timeout: 5m
+      healthyThreshold: 1
+      unhealthyThreshold: 3
+
+  # Depends on other resources
+  dependsOn:
+    - name: ingress-nginx
+      namespace: ingress-nginx
+    - name: cert-manager
+      namespace: cert-manager
+    - name: prometheus-operator
+      namespace: monitoring
+
+  # Suspend the release (for maintenance)
+  suspend: false
+
+  # Post-renderer configuration (for Kustomize, etc.)
+  postRenderers: []

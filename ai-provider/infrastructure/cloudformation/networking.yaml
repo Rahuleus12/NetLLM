@@ -1,0 +1,1280 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AI Provider - VPC and Networking Infrastructure
+
+  This template creates a production-grade VPC with:
+  - Multi-AZ deployment across 3 availability zones
+  - Public, private, and database subnets
+  - NAT Gateways for internet access
+  - VPC endpoints for AWS services
+  - Network ACLs and security groups
+  - VPC Flow Logs for network monitoring
+
+  Author: AI Provider Platform Team
+  Version: 1.0.0'
+
+Metadata:
+  License: MIT
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'VPC Configuration'
+        Parameters:
+          - VpcCidr
+          - AvailabilityZones
+          - EnableDnsHostnames
+          - EnableDnsSupport
+      - Label:
+          default: 'Subnet Configuration'
+        Parameters:
+          - PublicSubnetCidrs
+          - PrivateSubnetCidrs
+          - DatabaseSubnetCidrs
+      - Label:
+          default: 'NAT Gateway Configuration'
+        Parameters:
+          - EnableNatGateway
+          - SingleNatGateway
+      - Label:
+          default: 'VPC Flow Logs'
+        Parameters:
+          - EnableFlowLogs
+          - FlowLogsRetentionDays
+      - Label:
+          default: 'Environment Configuration'
+        Parameters:
+          - Environment
+          - ProjectName
+          - Owner
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'ai-provider'
+    Description: 'Name of the project'
+    AllowedPattern: '^[a-z0-9-]+$'
+    ConstraintDescription: 'Project name must contain only lowercase letters, numbers, and hyphens'
+
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    ConstraintDescription: 'Environment must be one of: dev, staging, prod'
+
+  VpcCidr:
+    Type: String
+    Default: '10.0.0.0/16'
+    Description: 'CIDR block for VPC'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
+    ConstraintDescription: 'VPC CIDR must be a valid CIDR block'
+
+  AvailabilityZones:
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+    Description: 'List of availability zones to use'
+    Default: 'us-east-1a,us-east-1b,us-east-1c'
+
+  PublicSubnetCidrs:
+    Type: CommaDelimitedList
+    Default: '10.0.1.0/24,10.0.2.0/24,10.0.3.0/24'
+    Description: 'CIDR blocks for public subnets (comma-separated)'
+
+  PrivateSubnetCidrs:
+    Type: CommaDelimitedList
+    Default: '10.0.10.0/24,10.0.11.0/24,10.0.12.0/24'
+    Description: 'CIDR blocks for private subnets (comma-separated)'
+
+  DatabaseSubnetCidrs:
+    Type: CommaDelimitedList
+    Default: '10.0.20.0/24,10.0.21.0/24,10.0.22.0/24'
+    Description: 'CIDR blocks for database subnets (comma-separated)'
+
+  EnableDnsHostnames:
+    Type: String
+    Default: 'true'
+    Description: 'Enable DNS hostnames in VPC'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableDnsSupport:
+    Type: String
+    Default: 'true'
+    Description: 'Enable DNS support in VPC'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableNatGateway:
+    Type: String
+    Default: 'true'
+    Description: 'Enable NAT Gateway for private subnets'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  SingleNatGateway:
+    Type: String
+    Default: 'false'
+    Description: 'Use a single NAT Gateway (cost savings, not recommended for production)'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableFlowLogs:
+    Type: String
+    Default: 'true'
+    Description: 'Enable VPC flow logs'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  FlowLogsRetentionDays:
+    Type: Number
+    Default: 30
+    Description: 'Number of days to retain VPC flow logs'
+    AllowedValues:
+      - 1
+      - 3
+      - 5
+      - 7
+      - 14
+      - 30
+      - 60
+      - 90
+      - 120
+      - 150
+      - 180
+      - 365
+      - 400
+      - 545
+      - 731
+      - 1827
+      - 3653
+
+  Owner:
+    Type: String
+    Default: 'DevOps'
+    Description: 'Owner of the resources'
+
+Conditions:
+  CreateMultipleNatGateways: !And
+    - !Equals [!Ref EnableNatGateway, 'true']
+    - !Equals [!Ref SingleNatGateway, 'false']
+
+  CreateSingleNatGateway: !And
+    - !Equals [!Ref EnableNatGateway, 'true']
+    - !Equals [!Ref SingleNatGateway, 'true']
+
+  EnableFlowLogsCondition: !Equals [!Ref EnableFlowLogs, 'true']
+
+Resources:
+  # ==============================================================================
+  # VPC
+  # ==============================================================================
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: !Ref EnableDnsHostnames
+      EnableDnsSupport: !Ref EnableDnsSupport
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-vpc'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: !Ref Owner
+
+  # ==============================================================================
+  # Internet Gateway
+  # ==============================================================================
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-igw'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # ==============================================================================
+  # Public Subnets
+  # ==============================================================================
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !Ref AvailabilityZones]
+      CidrBlock: !Select [0, !Ref PublicSubnetCidrs]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-public-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: public
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !Ref AvailabilityZones]
+      CidrBlock: !Select [1, !Ref PublicSubnetCidrs]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-public-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: public
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !Ref AvailabilityZones]
+      CidrBlock: !Select [2, !Ref PublicSubnetCidrs]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-public-3'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: public
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+
+  # ==============================================================================
+  # Private Subnets
+  # ==============================================================================
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !Ref AvailabilityZones]
+      CidrBlock: !Select [0, !Ref PrivateSubnetCidrs]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: private
+        - Key: kubernetes.io/role/internal-elb
+          Value: '1'
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !Ref AvailabilityZones]
+      CidrBlock: !Select [1, !Ref PrivateSubnetCidrs]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: private
+        - Key: kubernetes.io/role/internal-elb
+          Value: '1'
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !Ref AvailabilityZones]
+      CidrBlock: !Select [2, !Ref PrivateSubnetCidrs]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-3'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: private
+        - Key: kubernetes.io/role/internal-elb
+          Value: '1'
+
+  # ==============================================================================
+  # Database Subnets
+  # ==============================================================================
+
+  DatabaseSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !Ref AvailabilityZones]
+      CidrBlock: !Select [0, !Ref DatabaseSubnetCidrs]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-database-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: database
+
+  DatabaseSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !Ref AvailabilityZones]
+      CidrBlock: !Select [1, !Ref DatabaseSubnetCidrs]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-database-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: database
+
+  DatabaseSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !Ref AvailabilityZones]
+      CidrBlock: !Select [2, !Ref DatabaseSubnetCidrs]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-database-3'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: database
+
+  # ==============================================================================
+  # Database Subnet Group
+  # ==============================================================================
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub 'Database subnet group for ${ProjectName} ${Environment}'
+      DBSubnetGroupName: !Sub '${ProjectName}-${Environment}-db-subnet-group'
+      SubnetIds:
+        - !Ref DatabaseSubnet1
+        - !Ref DatabaseSubnet2
+        - !Ref DatabaseSubnet3
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-db-subnet-group'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # ElastiCache Subnet Group
+  # ==============================================================================
+
+  ElastiCacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: !Sub 'ElastiCache subnet group for ${ProjectName} ${Environment}'
+      CacheSubnetGroupName: !Sub '${ProjectName}-${Environment}-cache-subnet-group'
+      SubnetIds:
+        - !Ref DatabaseSubnet1
+        - !Ref DatabaseSubnet2
+        - !Ref DatabaseSubnet3
+
+  # ==============================================================================
+  # NAT Gateways
+  # ==============================================================================
+
+  # Elastic IPs for NAT Gateways
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateMultipleNatGateways
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-nat-eip-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateMultipleNatGateways
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-nat-eip-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  NatGateway3EIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateMultipleNatGateways
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-nat-eip-3'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Single NAT Gateway EIP
+  NatGatewaySingleEIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateSingleNatGateway
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-nat-eip'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # NAT Gateways (Multiple - High Availability)
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateMultipleNatGateways
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-nat-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateMultipleNatGateways
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-nat-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  NatGateway3:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateMultipleNatGateways
+    Properties:
+      AllocationId: !GetAtt NatGateway3EIP.AllocationId
+      SubnetId: !Ref PublicSubnet3
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-nat-3'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # NAT Gateway (Single - Cost Savings)
+  NatGatewaySingle:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateSingleNatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewaySingleEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-nat'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # Route Tables - Public
+  # ==============================================================================
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-public-rt'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: public
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      RouteTableId: !Ref PublicRouteTable
+
+  # ==============================================================================
+  # Route Tables - Private (Multiple NAT Gateways)
+  # ==============================================================================
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateMultipleNatGateways
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-rt-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: private
+
+  PrivateRoute1:
+    Type: AWS::EC2::Route
+    Condition: CreateMultipleNatGateways
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateMultipleNatGateways
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-rt-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: private
+
+  PrivateRoute2:
+    Type: AWS::EC2::Route
+    Condition: CreateMultipleNatGateways
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway2
+
+  PrivateRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateMultipleNatGateways
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-rt-3'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: private
+
+  PrivateRoute3:
+    Type: AWS::EC2::Route
+    Condition: CreateMultipleNatGateways
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway3
+
+  # ==============================================================================
+  # Route Tables - Private (Single NAT Gateway)
+  # ==============================================================================
+
+  PrivateRouteTableSingle:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateSingleNatGateway
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-rt'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: private
+
+  PrivateRouteSingle:
+    Type: AWS::EC2::Route
+    Condition: CreateSingleNatGateway
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableSingle
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGatewaySingle
+
+  # ==============================================================================
+  # Route Table Associations - Private (Multiple NAT Gateways)
+  # ==============================================================================
+
+  PrivateSubnet1RouteTableAssociationMulti:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateMultipleNatGateways
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable1
+
+  PrivateSubnet2RouteTableAssociationMulti:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateMultipleNatGateways
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable2
+
+  PrivateSubnet3RouteTableAssociationMulti:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateMultipleNatGateways
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTable3
+
+  # ==============================================================================
+  # Route Table Associations - Private (Single NAT Gateway)
+  # ==============================================================================
+
+  PrivateSubnet1RouteTableAssociationSingle:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateSingleNatGateway
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTableSingle
+
+  PrivateSubnet2RouteTableAssociationSingle:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateSingleNatGateway
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTableSingle
+
+  PrivateSubnet3RouteTableAssociationSingle:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateSingleNatGateway
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTableSingle
+
+  # ==============================================================================
+  # Route Tables - Database (Multiple NAT Gateways)
+  # ==============================================================================
+
+  DatabaseRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateMultipleNatGateways
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-database-rt-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: database
+
+  DatabaseRoute1:
+    Type: AWS::EC2::Route
+    Condition: CreateMultipleNatGateways
+    Properties:
+      RouteTableId: !Ref DatabaseRouteTable1
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway1
+
+  DatabaseRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateMultipleNatGateways
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-database-rt-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: database
+
+  DatabaseRoute2:
+    Type: AWS::EC2::Route
+    Condition: CreateMultipleNatGateways
+    Properties:
+      RouteTableId: !Ref DatabaseRouteTable2
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway2
+
+  DatabaseRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateMultipleNatGateways
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-database-rt-3'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: database
+
+  DatabaseRoute3:
+    Type: AWS::EC2::Route
+    Condition: CreateMultipleNatGateways
+    Properties:
+      RouteTableId: !Ref DatabaseRouteTable3
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway3
+
+  # ==============================================================================
+  # Route Tables - Database (Single NAT Gateway)
+  # ==============================================================================
+
+  DatabaseRouteTableSingle:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateSingleNatGateway
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-database-rt'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: database
+
+  DatabaseRouteSingle:
+    Type: AWS::EC2::Route
+    Condition: CreateSingleNatGateway
+    Properties:
+      RouteTableId: !Ref DatabaseRouteTableSingle
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGatewaySingle
+
+  # ==============================================================================
+  # Route Table Associations - Database (Multiple NAT Gateways)
+  # ==============================================================================
+
+  DatabaseSubnet1RouteTableAssociationMulti:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateMultipleNatGateways
+    Properties:
+      SubnetId: !Ref DatabaseSubnet1
+      RouteTableId: !Ref DatabaseRouteTable1
+
+  DatabaseSubnet2RouteTableAssociationMulti:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateMultipleNatGateways
+    Properties:
+      SubnetId: !Ref DatabaseSubnet2
+      RouteTableId: !Ref DatabaseRouteTable2
+
+  DatabaseSubnet3RouteTableAssociationMulti:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateMultipleNatGateways
+    Properties:
+      SubnetId: !Ref DatabaseSubnet3
+      RouteTableId: !Ref DatabaseRouteTable3
+
+  # ==============================================================================
+  # Route Table Associations - Database (Single NAT Gateway)
+  # ==============================================================================
+
+  DatabaseSubnet1RouteTableAssociationSingle:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateSingleNatGateway
+    Properties:
+      SubnetId: !Ref DatabaseSubnet1
+      RouteTableId: !Ref DatabaseRouteTableSingle
+
+  DatabaseSubnet2RouteTableAssociationSingle:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateSingleNatGateway
+    Properties:
+      SubnetId: !Ref DatabaseSubnet2
+      RouteTableId: !Ref DatabaseRouteTableSingle
+
+  DatabaseSubnet3RouteTableAssociationSingle:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateSingleNatGateway
+    Properties:
+      SubnetId: !Ref DatabaseSubnet3
+      RouteTableId: !Ref DatabaseRouteTableSingle
+
+  # ==============================================================================
+  # VPC Endpoints - S3
+  # ==============================================================================
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !If [CreateMultipleNatGateways, !Ref PrivateRouteTable1, !Ref PrivateRouteTableSingle]
+        - !If [CreateMultipleNatGateways, !Ref PrivateRouteTable2, !Ref 'AWS::NoValue']
+        - !If [CreateMultipleNatGateways, !Ref PrivateRouteTable3, !Ref 'AWS::NoValue']
+        - !If [CreateMultipleNatGateways, !Ref DatabaseRouteTable1, !Ref DatabaseRouteTableSingle]
+        - !If [CreateMultipleNatGateways, !Ref DatabaseRouteTable2, !Ref 'AWS::NoValue']
+        - !If [CreateMultipleNatGateways, !Ref DatabaseRouteTable3, !Ref 'AWS::NoValue']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-s3-endpoint'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # VPC Endpoints - DynamoDB
+  # ==============================================================================
+
+  DynamoDBEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !If [CreateMultipleNatGateways, !Ref PrivateRouteTable1, !Ref PrivateRouteTableSingle]
+        - !If [CreateMultipleNatGateways, !Ref PrivateRouteTable2, !Ref 'AWS::NoValue']
+        - !If [CreateMultipleNatGateways, !Ref PrivateRouteTable3, !Ref 'AWS::NoValue']
+        - !If [CreateMultipleNatGateways, !Ref DatabaseRouteTable1, !Ref DatabaseRouteTableSingle]
+        - !If [CreateMultipleNatGateways, !Ref DatabaseRouteTable2, !Ref 'AWS::NoValue']
+        - !If [CreateMultipleNatGateways, !Ref DatabaseRouteTable3, !Ref 'AWS::NoValue']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-dynamodb-endpoint'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # Network ACLs - Public
+  # ==============================================================================
+
+  PublicNetworkAcl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-public-nacl'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PublicNetworkAclEntryInbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: '0.0.0.0/0'
+
+  PublicNetworkAclEntryOutbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: '0.0.0.0/0'
+
+  PublicSubnet1NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      NetworkAclId: !Ref PublicNetworkAcl
+
+  PublicSubnet2NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      NetworkAclId: !Ref PublicNetworkAcl
+
+  PublicSubnet3NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      NetworkAclId: !Ref PublicNetworkAcl
+
+  # ==============================================================================
+  # Network ACLs - Private
+  # ==============================================================================
+
+  PrivateNetworkAcl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-nacl'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PrivateNetworkAclEntryInbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref VpcCidr
+
+  PrivateNetworkAclEntryOutbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: '0.0.0.0/0'
+
+  PrivateSubnet1NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      NetworkAclId: !Ref PrivateNetworkAcl
+
+  PrivateSubnet2NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      NetworkAclId: !Ref PrivateNetworkAcl
+
+  PrivateSubnet3NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      NetworkAclId: !Ref PrivateNetworkAcl
+
+  # ==============================================================================
+  # Network ACLs - Database
+  # ==============================================================================
+
+  DatabaseNetworkAcl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-database-nacl'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  DatabaseNetworkAclEntryInbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref VpcCidr
+
+  DatabaseNetworkAclEntryOutbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: '0.0.0.0/0'
+
+  DatabaseSubnet1NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref DatabaseSubnet1
+      NetworkAclId: !Ref DatabaseNetworkAcl
+
+  DatabaseSubnet2NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref DatabaseSubnet2
+      NetworkAclId: !Ref DatabaseNetworkAcl
+
+  DatabaseSubnet3NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref DatabaseSubnet3
+      NetworkAclId: !Ref DatabaseNetworkAcl
+
+  # ==============================================================================
+  # VPC Flow Logs
+  # ==============================================================================
+
+  FlowLogsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableFlowLogsCondition
+    Properties:
+      LogGroupName: !Sub '/aws/vpc/${ProjectName}-${Environment}/flow-logs'
+      RetentionInDays: !Ref FlowLogsRetentionDays
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-flow-logs-lg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  FlowLogsRole:
+    Type: AWS::IAM::Role
+    Condition: EnableFlowLogsCondition
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-flow-logs-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-flow-logs-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  FlowLogsRolePolicy:
+    Type: AWS::IAM::RolePolicy
+    Condition: EnableFlowLogsCondition
+    Properties:
+      RoleName: !Ref FlowLogsRole
+      PolicyName: !Sub '${ProjectName}-${Environment}-flow-logs-policy'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+            Resource: '*'
+
+  FlowLogs:
+    Type: AWS::EC2::FlowLog
+    Condition: EnableFlowLogsCondition
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt FlowLogsRole.Arn
+      LogGroupName: !Ref FlowLogsLogGroup
+      ResourceId: !Ref VPC
+      ResourceType: VPC
+      TrafficType: ALL
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-flow-logs'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  VpcId:
+    Description: 'VPC ID'
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcId'
+
+  VpcCidr:
+    Description: 'VPC CIDR block'
+    Value: !Ref VpcCidr
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcCidr'
+
+  VpcArn:
+    Description: 'VPC ARN'
+    Value: !GetAtt VPC.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcArn'
+
+  PublicSubnetIds:
+    Description: 'List of public subnet IDs'
+    Value: !Join [',', [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnetIds'
+
+  PrivateSubnetIds:
+    Description: 'List of private subnet IDs'
+    Value: !Join [',', [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnetIds'
+
+  DatabaseSubnetIds:
+    Description: 'List of database subnet IDs'
+    Value: !Join [',', [!Ref DatabaseSubnet1, !Ref DatabaseSubnet2, !Ref DatabaseSubnet3]]
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseSubnetIds'
+
+  PublicSubnetCidrs:
+    Description: 'List of public subnet CIDR blocks'
+    Value: !Join [',', !Ref PublicSubnetCidrs]
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnetCidrs'
+
+  PrivateSubnetCidrs:
+    Description: 'List of private subnet CIDR blocks'
+    Value: !Join [',', !Ref PrivateSubnetCidrs]
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnetCidrs'
+
+  DatabaseSubnetCidrs:
+    Description: 'List of database subnet CIDR blocks'
+    Value: !Join [',', !Ref DatabaseSubnetCidrs]
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseSubnetCidrs'
+
+  DatabaseSubnetGroupName:
+    Description: 'Database subnet group name'
+    Value: !Ref DatabaseSubnetGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseSubnetGroupName'
+
+  ElastiCacheSubnetGroupName:
+    Description: 'ElastiCache subnet group name'
+    Value: !Ref ElastiCacheSubnetGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCacheSubnetGroupName'
+
+  InternetGatewayId:
+    Description: 'Internet Gateway ID'
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub '${AWS::StackName}-InternetGatewayId'
+
+  NatGatewayPublicIps:
+    Description: 'Public IPs of NAT Gateways'
+    Value: !If [
+      CreateMultipleNatGateways,
+      !Join [',', [!Ref NatGateway1EIP, !Ref NatGateway2EIP, !Ref NatGateway3EIP]],
+      !If [CreateSingleNatGateway, !Ref NatGatewaySingleEIP, 'None']
+    ]
+    Export:
+      Name: !Sub '${AWS::StackName}-NatGatewayPublicIps'
+
+  FlowLogsLogGroupArn:
+    Description: 'ARN of VPC Flow Logs CloudWatch Log Group'
+    Value: !If [EnableFlowLogsCondition, !GetAtt FlowLogsLogGroup.Arn, '']
+    Export:
+      Name: !Sub '${AWS::StackName}-FlowLogsLogGroupArn'
+
+  PublicRouteTableId:
+    Description: 'Public route table ID'
+    Value: !Ref PublicRouteTable
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicRouteTableId'
+
+  AvailabilityZones:
+    Description: 'List of availability zones used'
+    Value: !Join [',', !Ref AvailabilityZones]
+    Export:
+      Name: !Sub '${AWS::StackName}-AvailabilityZones'

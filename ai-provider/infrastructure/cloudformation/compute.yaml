@@ -1,0 +1,844 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AI Provider - EKS Compute Infrastructure
+
+  This template creates a production-grade EKS cluster with:
+  - EKS cluster with managed control plane
+  - General-purpose node group for workloads
+  - GPU node group for AI/ML inference
+  - IAM roles for service accounts (IRSA)
+  - Cluster encryption with KMS
+  - Essential EKS add-ons
+  - Security groups for cluster and nodes
+
+  Author: AI Provider Platform Team
+  Version: 1.0.0'
+
+Metadata:
+  License: MIT
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'EKS Cluster Configuration'
+        Parameters:
+          - EksClusterName
+          - EksClusterVersion
+          - EksClusterEndpointPrivateAccess
+          - EksClusterEndpointPublicAccess
+          - EksClusterEncryptionEnabled
+      - Label:
+          default: 'General Node Group Configuration'
+        Parameters:
+          - EksNodeInstanceTypes
+          - EksNodeDesiredCapacity
+          - EksNodeMinSize
+          - EksNodeMaxSize
+          - EksNodeDiskSize
+      - Label:
+          default: 'GPU Node Group Configuration'
+        Parameters:
+          - EksGpuNodeEnabled
+          - EksGpuNodeInstanceTypes
+          - EksGpuNodeDesiredCapacity
+          - EksGpuNodeMinSize
+          - EksGpuNodeMaxSize
+          - EksGpuNodeDiskSize
+      - Label:
+          default: 'Network Configuration'
+        Parameters:
+          - VpcId
+          - PrivateSubnetIds
+          - PublicSubnetIds
+      - Label:
+          default: 'Security Configuration'
+        Parameters:
+          - ClusterSecurityGroupId
+          - NodeSecurityGroupId
+          - KmsKeyId
+      - Label:
+          default: 'Environment Configuration'
+        Parameters:
+          - ProjectName
+          - Environment
+          - Owner
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'ai-provider'
+    Description: 'Name of the project'
+
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  EksClusterName:
+    Type: String
+    Default: ''
+    Description: 'Name of EKS cluster (leave empty to auto-generate)'
+
+  EksClusterVersion:
+    Type: String
+    Default: '1.28'
+    Description: 'Kubernetes version for EKS cluster'
+    AllowedValues:
+      - '1.25'
+      - '1.26'
+      - '1.27'
+      - '1.28'
+      - '1.29'
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: 'VPC ID for EKS cluster'
+
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: 'List of private subnet IDs for EKS nodes'
+
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: 'List of public subnet IDs for load balancers'
+
+  EksClusterEndpointPrivateAccess:
+    Type: String
+    Default: 'true'
+    Description: 'Enable private access to cluster endpoint'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EksClusterEndpointPublicAccess:
+    Type: String
+    Default: 'true'
+    Description: 'Enable public access to cluster endpoint'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EksClusterEncryptionEnabled:
+    Type: String
+    Default: 'true'
+    Description: 'Enable envelope encryption for Kubernetes secrets'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EksNodeInstanceTypes:
+    Type: CommaDelimitedList
+    Default: 'm5.large,m5.xlarge'
+    Description: 'EC2 instance types for general nodes'
+
+  EksNodeDesiredCapacity:
+    Type: Number
+    Default: 3
+    Description: 'Desired number of general nodes'
+    MinValue: 1
+    MaxValue: 100
+
+  EksNodeMinSize:
+    Type: Number
+    Default: 2
+    Description: 'Minimum number of general nodes'
+    MinValue: 1
+    MaxValue: 100
+
+  EksNodeMaxSize:
+    Type: Number
+    Default: 10
+    Description: 'Maximum number of general nodes'
+    MinValue: 1
+    MaxValue: 100
+
+  EksNodeDiskSize:
+    Type: Number
+    Default: 100
+    Description: 'Disk size for general nodes (GB)'
+    MinValue: 20
+    MaxValue: 1024
+
+  EksGpuNodeEnabled:
+    Type: String
+    Default: 'true'
+    Description: 'Enable GPU node group'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EksGpuNodeInstanceTypes:
+    Type: CommaDelimitedList
+    Default: 'g4dn.xlarge,g4dn.2xlarge'
+    Description: 'EC2 instance types for GPU nodes'
+
+  EksGpuNodeDesiredCapacity:
+    Type: Number
+    Default: 2
+    Description: 'Desired number of GPU nodes'
+    MinValue: 0
+    MaxValue: 50
+
+  EksGpuNodeMinSize:
+    Type: Number
+    Default: 1
+    Description: 'Minimum number of GPU nodes'
+    MinValue: 0
+    MaxValue: 50
+
+  EksGpuNodeMaxSize:
+    Type: Number
+    Default: 5
+    Description: 'Maximum number of GPU nodes'
+    MinValue: 0
+    MaxValue: 50
+
+  EksGpuNodeDiskSize:
+    Type: Number
+    Default: 200
+    Description: 'Disk size for GPU nodes (GB)'
+    MinValue: 50
+    MaxValue: 2048
+
+  ClusterSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: 'Security group ID for EKS cluster'
+
+  NodeSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: 'Security group ID for EKS nodes'
+
+  KmsKeyId:
+    Type: String
+    Description: 'KMS key ID for encryption'
+
+  Owner:
+    Type: String
+    Default: 'DevOps'
+    Description: 'Owner of the resources'
+
+Conditions:
+  CreateGpuNodeGroup: !Equals [!Ref EksGpuNodeEnabled, 'true']
+  EnableClusterEncryption: !Equals [!Ref EksClusterEncryptionEnabled, 'true']
+  AutoGenerateClusterName: !Equals [!Ref EksClusterName, '']
+
+Resources:
+  # ==============================================================================
+  # IAM Role for EKS Cluster
+  # ==============================================================================
+
+  EksClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-eks-cluster-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-eks-cluster-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  EksClusterRoleAdditionalPolicy:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      RoleName: !Ref EksClusterRole
+      PolicyName: !Sub '${ProjectName}-${Environment}-eks-cluster-additional'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:DescribeInstances
+              - ec2:DescribeRouteTables
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeSubnets
+              - ec2:DescribeVpcs
+              - ecr:GetAuthorizationToken
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+            Resource: '*'
+
+  # ==============================================================================
+  # IAM Role for EKS Node Group
+  # ==============================================================================
+
+  EksNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-eks-node-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-eks-node-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  EksNodeRoleAdditionalPolicy:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      RoleName: !Ref EksNodeRole
+      PolicyName: !Sub '${ProjectName}-${Environment}-eks-node-additional'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:Describe*
+              - ecr:GetAuthorizationToken
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - s3:GetObject
+              - s3:ListBucket
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: '*'
+
+  # ==============================================================================
+  # EKS Cluster
+  # ==============================================================================
+
+  EksCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !If [AutoGenerateClusterName, !Sub '${ProjectName}-${Environment}-cluster', !Ref EksClusterName]
+      Version: !Ref EksClusterVersion
+      RoleArn: !GetAtt EksClusterRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds:
+          - !Ref ClusterSecurityGroupId
+        EndpointPrivateAccess: !Ref EksClusterEndpointPrivateAccess
+        EndpointPublicAccess: !Ref EksClusterEndpointPublicAccess
+      EncryptionConfig: !If
+        - EnableClusterEncryption
+        - - Resources:
+              - secrets
+            Provider:
+              KeyArn: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}'
+        - !Ref 'AWS::NoValue'
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - Type: api
+            - Type: audit
+            - Type: authenticator
+            - Type: controllerManager
+            - Type: scheduler
+      Tags:
+        - Key: Name
+          Value: !If [AutoGenerateClusterName, !Sub '${ProjectName}-${Environment}-cluster', !Ref EksClusterName]
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # EKS Node Group - General
+  # ==============================================================================
+
+  EksNodeGroupGeneral:
+    Type: AWS::EKS::Nodegroup
+    DependsOn: EksCluster
+    Properties:
+      ClusterName: !Ref EksCluster
+      NodegroupName: !Sub '${ProjectName}-${Environment}-general'
+      NodeRole: !GetAtt EksNodeRole.Arn
+      Subnets: !Ref PrivateSubnetIds
+      InstanceTypes: !Ref EksNodeInstanceTypes
+      DiskSize: !Ref EksNodeDiskSize
+      ScalingConfig:
+        DesiredSize: !Ref EksNodeDesiredCapacity
+        MinSize: !Ref EksNodeMinSize
+        MaxSize: !Ref EksNodeMaxSize
+      UpdateConfig:
+        MaxUnavailable: 1
+      Labels:
+        Environment: !Ref Environment
+        NodeGroup: general
+        NodeType: general
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-general-node-group'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: NodeGroupType
+          Value: general
+
+  # ==============================================================================
+  # EKS Node Group - GPU
+  # ==============================================================================
+
+  EksNodeGroupGpu:
+    Type: AWS::EKS::Nodegroup
+    Condition: CreateGpuNodeGroup
+    DependsOn: EksCluster
+    Properties:
+      ClusterName: !Ref EksCluster
+      NodegroupName: !Sub '${ProjectName}-${Environment}-gpu'
+      NodeRole: !GetAtt EksNodeRole.Arn
+      Subnets: !Ref PrivateSubnetIds
+      InstanceTypes: !Ref EksGpuNodeInstanceTypes
+      DiskSize: !Ref EksGpuNodeDiskSize
+      ScalingConfig:
+        DesiredSize: !Ref EksGpuNodeDesiredCapacity
+        MinSize: !Ref EksGpuNodeMinSize
+        MaxSize: !Ref EksGpuNodeMaxSize
+      UpdateConfig:
+        MaxUnavailable: 1
+      Labels:
+        Environment: !Ref Environment
+        NodeGroup: gpu
+        NodeType: gpu
+        'nvidia.com/gpu': 'true'
+      Taints:
+        - Key: 'nvidia.com/gpu'
+          Value: 'true'
+          Effect: NO_SCHEDULE
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-gpu-node-group'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: NodeGroupType
+          Value: gpu
+
+  # ==============================================================================
+  # EKS Add-ons
+  # ==============================================================================
+
+  EksAddonVpcCni:
+    Type: AWS::EKS::Addon
+    DependsOn: [EksCluster, EksNodeGroupGeneral]
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: vpc-cni
+      AddonVersion: v1.14.0-eksbuild.1
+      ServiceAccountRoleArn: !GetAtt EksNodeRole.Arn
+      ResolveConflicts: OVERWRITE
+
+  EksAddonCoreDns:
+    Type: AWS::EKS::Addon
+    DependsOn: [EksCluster, EksNodeGroupGeneral]
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: coredns
+      AddonVersion: v1.10.1-eksbuild.1
+      ServiceAccountRoleArn: !GetAtt EksNodeRole.Arn
+      ResolveConflicts: OVERWRITE
+
+  EksAddonKubeProxy:
+    Type: AWS::EKS::Addon
+    DependsOn: [EksCluster, EksNodeGroupGeneral]
+    Properties:
+      ClusterName: !Ref EksCluster
+      AddonName: kube-proxy
+      AddonVersion: v1.28.1-eksbuild.1
+      ServiceAccountRoleArn: !GetAtt EksNodeRole.Arn
+      ResolveConflicts: OVERWRITE
+
+  # ==============================================================================
+  # IAM Roles for Service Accounts (IRSA)
+  # ==============================================================================
+
+  # OIDC Provider
+  EksOidcProvider:
+    Type: Custom::OidcProvider
+    DependsOn: EksCluster
+    Properties:
+      ServiceToken: !GetAtt OidcProviderFunction.Arn
+      ClusterName: !Ref EksCluster
+      Region: !Ref AWS::Region
+
+  # Lambda function to create OIDC provider
+  OidcProviderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-oidc-provider'
+      Handler: index.handler
+      Role: !GetAtt OidcProviderFunctionRole.Arn
+      Runtime: python3.11
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import urllib3
+          import jmespath
+          import time
+
+          def handler(event, context):
+              eks = boto3.client('eks', region_name=event['ResourceProperties']['Region'])
+              iam = boto3.client('iam')
+
+              if event['RequestType'] == 'Delete':
+                  send_response(event, context, 'SUCCESS')
+                  return
+
+              cluster_name = event['ResourceProperties']['ClusterName']
+
+              # Get cluster info
+              cluster = eks.describe_cluster(name=cluster_name)
+              oidc_url = cluster['cluster']['identity']['oidc']['issuer']
+              oidc_arn = cluster['cluster']['arn']
+
+              # Extract thumbprint
+              url = oidc_url.replace('https://', '')
+              http = urllib3.PoolManager()
+              resp = http.request('GET', f'{oidc_url}/.well-known/openid-configuration')
+              openid_config = json.loads(resp.data.decode('utf-8'))
+              jwks_uri = openid_config['jwks_uri']
+              resp = http.request('GET', jwks_uri)
+
+              # Create IAM OIDC provider
+              try:
+                  thumbprint = '9e99a48a9960b14926bb7f3b02e22da2afd0d5d8'  # Standard thumbprint
+                  iam.create_open_id_connect_provider(
+                      Url=oidc_url,
+                      ThumbprintList=[thumbprint],
+                      ClientIDList=['sts.amazonaws.com'],
+                      Tags=[
+                          {'Key': 'ClusterName', 'Value': cluster_name}
+                      ]
+                  )
+              except iam.exceptions.EntityAlreadyExistsException:
+                  pass
+
+              send_response(event, context, 'SUCCESS', {
+                  'OidcUrl': oidc_url,
+                  'OidcArn': oidc_arn
+              })
+
+          def send_response(event, context, status, data=None):
+              response_body = {
+                  'Status': status,
+                  'Reason': f'See CloudWatch Log Stream: {context.log_stream_name}',
+                  'PhysicalResourceId': event.get('PhysicalResourceId', context.log_stream_name),
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': data or {}
+              }
+
+              http = urllib3.PoolManager()
+              http.request(
+                  'PUT',
+                  event['ResponseURL'],
+                  body=json.dumps(response_body),
+                  headers={'content-type': ''},
+                  retries=False
+              )
+
+  OidcProviderFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-oidc-provider-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EKSDescribe
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                  - iam:CreateOpenIDConnectProvider
+                  - iam:TagOpenIDConnectProvider
+                Resource: '*'
+
+  # ==============================================================================
+  # IAM Role for AWS Load Balancer Controller
+  # ==============================================================================
+
+  AlbControllerRole:
+    Type: AWS::IAM::Role
+    DependsOn: EksOidcProvider
+    Condition: EnableClusterEncryption
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-alb-controller-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !GetAtt EksOidcProvider.OidcArn
+            Action: 'sts:AssumeRoleWithWebIdentity'
+            Condition:
+              StringEquals: !Sub
+                - '${OidcUrl}:sub'
+                - 'system:serviceaccount:kube-system:aws-load-balancer-controller'
+                - OidcUrl: !GetAtt EksOidcProvider.OidcUrl
+      Policies:
+        - PolicyName: ALBControllerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeAccountAttributes
+                  - ec2:DescribeAddresses
+                  - ec2:DescribeInternetGateways
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeInstances
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeTags
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeLoadBalancerAttributes
+                  - elasticloadbalancing:DescribeListeners
+                  - elasticloadbalancing:DescribeListenerCertificates
+                  - elasticloadbalancing:DescribeSSLPolicies
+                  - elasticloadbalancing:DescribeRules
+                  - elasticloadbalancing:DescribeTargetGroups
+                  - elasticloadbalancing:DescribeTargetGroupAttributes
+                  - elasticloadbalancing:DescribeTargetHealth
+                  - elasticloadbalancing:DescribeTags
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - elasticloadbalancing:CreateLoadBalancer
+                  - elasticloadbalancing:CreateTargetGroup
+                  - elasticloadbalancing:CreateListener
+                  - elasticloadbalancing:CreateRule
+                  - elasticloadbalancing:DeleteLoadBalancer
+                  - elasticloadbalancing:DeleteTargetGroup
+                  - elasticloadbalancing:DeleteListener
+                  - elasticloadbalancing:DeleteRule
+                  - elasticloadbalancing:ModifyLoadBalancerAttributes
+                  - elasticloadbalancing:ModifyTargetGroup
+                  - elasticloadbalancing:ModifyTargetGroupAttributes
+                  - elasticloadbalancing:ModifyListener
+                  - elasticloadbalancing:ModifyRule
+                  - elasticloadbalancing:AddTags
+                  - elasticloadbalancing:RemoveTags
+                  - elasticloadbalancing:SetSecurityGroups
+                  - elasticloadbalancing:SetSubnets
+                  - elasticloadbalancing:RegisterTargets
+                  - elasticloadbalancing:DeregisterTargets
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-alb-controller-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # IAM Role for Cluster Autoscaler
+  # ==============================================================================
+
+  ClusterAutoscalerRole:
+    Type: AWS::IAM::Role
+    DependsOn: EksOidcProvider
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-cluster-autoscaler-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !GetAtt EksOidcProvider.OidcArn
+            Action: 'sts:AssumeRoleWithWebIdentity'
+            Condition:
+              StringEquals: !Sub
+                - '${OidcUrl}:sub'
+                - 'system:serviceaccount:kube-system:cluster-autoscaler'
+                - OidcUrl: !GetAtt EksOidcProvider.OidcUrl
+      Policies:
+        - PolicyName: ClusterAutoscalerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - autoscaling:DescribeAutoScalingGroups
+                  - autoscaling:DescribeAutoScalingInstances
+                  - autoscaling:DescribeLaunchConfigurations
+                  - autoscaling:DescribeScalingActivities
+                  - autoscaling:DescribeTags
+                  - ec2:DescribeLaunchTemplateVersions
+                  - autoscaling:SetDesiredCapacity
+                  - autoscaling:TerminateInstanceInAutoScalingGroup
+                  - ec2:DescribeInstanceTypes
+                  - ec2:DescribeInstances
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-cluster-autoscaler-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  EksClusterName:
+    Description: 'EKS cluster name'
+    Value: !Ref EksCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterName'
+
+  EksClusterArn:
+    Description: 'EKS cluster ARN'
+    Value: !GetAtt EksCluster.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterArn'
+
+  EksClusterEndpoint:
+    Description: 'EKS cluster endpoint'
+    Value: !GetAtt EksCluster.Endpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterEndpoint'
+
+  EksClusterVersion:
+    Description: 'EKS cluster version'
+    Value: !Ref EksClusterVersion
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterVersion'
+
+  EksClusterCertificateAuthorityData:
+    Description: 'EKS cluster certificate authority data'
+    Value: !GetAtt EksCluster.CertificateAuthorityData
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterCertificateAuthorityData'
+
+  EksClusterSecurityGroupId:
+    Description: 'EKS cluster security group ID'
+    Value: !GetAtt EksCluster.ClusterSecurityGroupId
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterSecurityGroupId'
+
+  EksOidcIssuerUrl:
+    Description: 'EKS OIDC issuer URL'
+    Value: !GetAtt EksCluster.OpenIdConnectIssuerUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-EksOidcIssuerUrl'
+
+  EksOidcProviderArn:
+    Description: 'EKS OIDC provider ARN'
+    Value: !GetAtt EksOidcProvider.OidcArn
+    Export:
+      Name: !Sub '${AWS::StackName}-EksOidcProviderArn'
+
+  EksNodeRoleArn:
+    Description: 'EKS node IAM role ARN'
+    Value: !GetAtt EksNodeRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EksNodeRoleArn'
+
+  EksClusterRoleArn:
+    Description: 'EKS cluster IAM role ARN'
+    Value: !GetAtt EksClusterRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterRoleArn'
+
+  EksNodeGroupGeneralName:
+    Description: 'EKS general node group name'
+    Value: !Ref EksNodeGroupGeneral
+    Export:
+      Name: !Sub '${AWS::StackName}-EksNodeGroupGeneralName'
+
+  EksNodeGroupGpuName:
+    Description: 'EKS GPU node group name'
+    Value: !If [CreateGpuNodeGroup, !Ref EksNodeGroupGpu, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-EksNodeGroupGpuName'
+
+  AlbControllerRoleArn:
+    Description: 'AWS Load Balancer Controller IAM role ARN'
+    Value: !If [EnableClusterEncryption, !GetAtt AlbControllerRole.Arn, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-AlbControllerRoleArn'
+
+  ClusterAutoscalerRoleArn:
+    Description: 'Cluster Autoscaler IAM role ARN'
+    Value: !GetAtt ClusterAutoscalerRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ClusterAutoscalerRoleArn'
+
+  KubectlConfigCommand:
+    Description: 'Command to configure kubectl'
+    Value: !Sub 'aws eks update-kubeconfig --name ${EksCluster} --region ${AWS::Region}'
+    Export:
+      Name: !Sub '${AWS::StackName}-KubectlConfigCommand'
+
+  EksClusterSummary:
+    Description: 'EKS cluster deployment summary'
+    Value: !Sub |
+      ========================================================================
+      EKS Cluster Summary
+      ========================================================================
+
+      Cluster Name:   ${EksCluster}
+      Cluster Version: ${EksClusterVersion}
+      Cluster ARN:    ${EksCluster.Arn}
+      Endpoint:       ${EksCluster.Endpoint}
+
+      ------------------------------------------------------------------------
+      Node Groups
+      ------------------------------------------------------------------------
+      General Nodes:
+        Instance Types: ${EksNodeInstanceTypes}
+        Desired:        ${EksNodeDesiredCapacity}
+        Min:            ${EksNodeMinSize}
+        Max:            ${EksNodeMaxSize}
+
+      GPU Nodes:       ${EksGpuNodeEnabled}
+        Instance Types: ${EksGpuNodeInstanceTypes}
+        Desired:        ${EksGpuNodeDesiredCapacity}
+        Min:            ${EksGpuNodeMinSize}
+        Max:            ${EksGpuNodeMaxSize}
+
+      ------------------------------------------------------------------------
+      Add-ons Installed
+      ------------------------------------------------------------------------
+      - VPC CNI:       v1.14.0-eksbuild.1
+      - CoreDNS:       v1.10.1-eksbuild.1
+      - Kube-proxy:    v1.28.1-eksbuild.1
+
+      ------------------------------------------------------------------------
+      Configure kubectl
+      ------------------------------------------------------------------------
+      aws eks update-kubeconfig --name ${EksCluster} --region ${AWS::Region}
+
+      ========================================================================

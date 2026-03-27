@@ -1,0 +1,983 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AI Provider - Database Infrastructure (RDS PostgreSQL & ElastiCache Redis)
+
+  This template creates production-grade database infrastructure:
+  - RDS PostgreSQL with Multi-AZ deployment
+  - ElastiCache Redis in cluster mode
+  - Encryption at rest and in transit
+  - Automated backups and snapshots
+  - Performance optimization
+  - Comprehensive monitoring
+
+  Author: AI Provider Platform Team
+  Version: 1.0.0'
+
+Metadata:
+  License: MIT
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'General Configuration'
+        Parameters:
+          - ProjectName
+          - Environment
+          - Owner
+      - Label:
+          default: 'RDS Configuration'
+        Parameters:
+          - RdsEnabled
+          - RdsInstanceClass
+          - RdsEngineVersion
+          - RdsAllocatedStorage
+          - RdsMaxAllocatedStorage
+          - RdsMultiAz
+          - RdsUsername
+          - RdsDatabaseName
+          - RdsBackupRetentionPeriod
+          - RdsDeletionProtection
+      - Label:
+          default: 'ElastiCache Configuration'
+        Parameters:
+          - ElastiCacheEnabled
+          - ElastiCacheNodeType
+          - ElastiCacheEngineVersion
+          - ElastiCacheNumCacheClusters
+          - ElastiCacheNumNodeGroups
+          - ElastiCacheReplicasPerNodeGroup
+          - ElastiCacheAutomaticFailover
+      - Label:
+          default: 'Security Configuration'
+        Parameters:
+          - EnableEncryption
+          - VpcId
+          - VpcCidr
+      - Label:
+          default: 'Monitoring Configuration'
+        Parameters:
+          - EnablePerformanceInsights
+          - EnableEnhancedMonitoring
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'ai-provider'
+    Description: 'Name of the project'
+    AllowedPattern: '^[a-z0-9-]+$'
+    ConstraintDescription: 'Must contain only lowercase letters, numbers, and hyphens'
+
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  Owner:
+    Type: String
+    Default: 'DevOps'
+    Description: 'Owner of the resources'
+
+  # RDS Parameters
+  RdsEnabled:
+    Type: String
+    Default: 'true'
+    Description: 'Enable RDS PostgreSQL instance'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  RdsInstanceClass:
+    Type: String
+    Default: 'db.r6g.large'
+    Description: 'Instance class for RDS PostgreSQL'
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.t3.large
+      - db.r6g.large
+      - db.r6g.xlarge
+      - db.r6g.2xlarge
+      - db.r6g.4xlarge
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
+
+  RdsEngineVersion:
+    Type: String
+    Default: '15.4'
+    Description: 'PostgreSQL engine version'
+    AllowedValues:
+      - '14.9'
+      - '14.10'
+      - '15.3'
+      - '15.4'
+      - '16.0'
+
+  RdsAllocatedStorage:
+    Type: Number
+    Default: 100
+    Description: 'Allocated storage in GB'
+    MinValue: 20
+    MaxValue: 16384
+
+  RdsMaxAllocatedStorage:
+    Type: Number
+    Default: 1000
+    Description: 'Maximum allocated storage for autoscaling (GB)'
+    MinValue: 100
+    MaxValue: 65536
+
+  RdsMultiAz:
+    Type: String
+    Default: 'true'
+    Description: 'Enable Multi-AZ deployment'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  RdsUsername:
+    Type: String
+    Default: 'ai_provider_admin'
+    Description: 'Master username for RDS'
+    NoEcho: true
+
+  RdsDatabaseName:
+    Type: String
+    Default: 'ai_provider'
+    Description: 'Database name'
+
+  RdsBackupRetentionPeriod:
+    Type: Number
+    Default: 30
+    Description: 'Backup retention period in days'
+    MinValue: 0
+    MaxValue: 35
+
+  RdsDeletionProtection:
+    Type: String
+    Default: 'true'
+    Description: 'Enable deletion protection'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  # ElastiCache Parameters
+  ElastiCacheEnabled:
+    Type: String
+    Default: 'true'
+    Description: 'Enable ElastiCache Redis cluster'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  ElastiCacheNodeType:
+    Type: String
+    Default: 'cache.r6g.large'
+    Description: 'Node type for ElastiCache Redis'
+    AllowedValues:
+      - cache.t3.micro
+      - cache.t3.small
+      - cache.t3.medium
+      - cache.r6g.large
+      - cache.r6g.xlarge
+      - cache.r6g.2xlarge
+      - cache.r5.large
+      - cache.r5.xlarge
+      - cache.r5.2xlarge
+
+  ElastiCacheEngineVersion:
+    Type: String
+    Default: '7.0'
+    Description: 'Redis engine version'
+    AllowedValues:
+      - '6.2'
+      - '7.0'
+      - '7.1'
+
+  ElastiCacheNumCacheClusters:
+    Type: Number
+    Default: 2
+    Description: 'Number of cache clusters'
+    MinValue: 1
+    MaxValue: 500
+
+  ElastiCacheNumNodeGroups:
+    Type: Number
+    Default: 2
+    Description: 'Number of node groups (shards)'
+    MinValue: 1
+    MaxValue: 500
+
+  ElastiCacheReplicasPerNodeGroup:
+    Type: Number
+    Default: 1
+    Description: 'Number of replicas per node group'
+    MinValue: 0
+    MaxValue: 5
+
+  ElastiCacheAutomaticFailover:
+    Type: String
+    Default: 'true'
+    Description: 'Enable automatic failover'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  # Network Parameters
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: 'VPC ID'
+
+  VpcCidr:
+    Type: String
+    Description: 'VPC CIDR block'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
+
+  DatabaseSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: 'List of database subnet IDs'
+
+  # Security Parameters
+  EnableEncryption:
+    Type: String
+    Default: 'true'
+    Description: 'Enable encryption at rest'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  KmsKeyId:
+    Type: String
+    Description: 'KMS key ID for encryption'
+    Default: ''
+
+  # Monitoring Parameters
+  EnablePerformanceInsights:
+    Type: String
+    Default: 'true'
+    Description: 'Enable RDS Performance Insights'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableEnhancedMonitoring:
+    Type: String
+    Default: 'true'
+    Description: 'Enable RDS Enhanced Monitoring'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  CreateRds: !Equals [!Ref RdsEnabled, 'true']
+  CreateElastiCache: !Equals [!Ref ElastiCacheEnabled, 'true']
+  EnableRdsEncryption: !And
+    - !Equals [!Ref RdsEnabled, 'true']
+    - !Equals [!Ref EnableEncryption, 'true']
+  EnableElastiCacheEncryption: !And
+    - !Equals [!Ref ElastiCacheEnabled, 'true']
+    - !Equals [!Ref EnableEncryption, 'true']
+  UseProvidedKmsKey: !Not [!Equals [!Ref KmsKeyId, '']]
+  EnableMultiAz: !And
+    - !Equals [!Ref RdsEnabled, 'true']
+    - !Equals [!Ref RdsMultiAz, 'true']
+  EnablePerformanceInsights: !And
+    - !Equals [!Ref RdsEnabled, 'true']
+    - !Equals [!Ref EnablePerformanceInsights, 'true']
+  EnableEnhancedMonitoring: !And
+    - !Equals [!Ref RdsEnabled, 'true']
+    - !Equals [!Ref EnableEnhancedMonitoring, 'true']
+
+Resources:
+  # ==============================================================================
+  # KMS Key for Encryption (if not provided)
+  # ==============================================================================
+
+  DatabaseKmsKey:
+    Type: AWS::KMS::Key
+    Condition: EnableRdsEncryption
+    Properties:
+      Description: !Sub 'KMS key for database encryption - ${ProjectName} ${Environment}'
+      Enabled: true
+      EnableKeyRotation: true
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowRDS
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:Encrypt
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+          - Sid: AllowElastiCache
+            Effect: Allow
+            Principal:
+              Service: elasticache.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:Encrypt
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-database-key'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  DatabaseKmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Condition: EnableRdsEncryption
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-${Environment}-database-key'
+      TargetKeyId: !Ref DatabaseKmsKey
+
+  # ==============================================================================
+  # RDS Security Group
+  # ==============================================================================
+
+  RdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateRds
+    Properties:
+      GroupDescription: !Sub 'Security group for RDS PostgreSQL - ${ProjectName} ${Environment}'
+      GroupName: !Sub '${ProjectName}-${Environment}-rds-sg'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref VpcCidr
+          Description: 'PostgreSQL access from VPC'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+          Description: 'Allow all outbound traffic'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # RDS Parameter Group
+  # ==============================================================================
+
+  RdsParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Condition: CreateRds
+    Properties:
+      Description: !Sub 'Custom PostgreSQL parameter group for ${ProjectName} ${Environment}'
+      Family: !Sub 'postgres${RdsEngineVersion}'
+      Parameters:
+        max_connections: '500'
+        shared_buffers: '{DBInstanceClassMemory/4}'
+        work_mem: '262144'
+        maintenance_work_mem: '524288'
+        effective_cache_size: '{DBInstanceClassMemory*3/4}'
+        random_page_cost: '1.1'
+        effective_io_concurrency: '200'
+        wal_buffers: '16384'
+        checkpoint_completion_target: '0.9'
+        max_wal_size: '2048'
+        min_wal_size: '1024'
+        default_statistics_target: '100'
+        log_min_duration_statement: '1000'
+        log_checkpoints: '1'
+        log_connections: '1'
+        log_disconnections: '1'
+        log_lock_waits: '1'
+        autovacuum: '1'
+        autovacuum_max_workers: '3'
+        statement_timeout: '300000'
+        ssl: '1'
+        timezone: 'UTC'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-postgres-params'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # RDS Database Instance
+  # ==============================================================================
+
+  RdsInstance:
+    Type: AWS::RDS::DBInstance
+    Condition: CreateRds
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub '${ProjectName}-${Environment}-postgres'
+      Engine: postgres
+      EngineVersion: !Ref RdsEngineVersion
+      DBInstanceClass: !Ref RdsInstanceClass
+      AllocatedStorage: !Ref RdsAllocatedStorage
+      MaxAllocatedStorage: !Ref RdsMaxAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: !Ref EnableEncryption
+      KMSKeyId: !If [UseProvidedKmsKey, !Ref KmsKeyId, !Ref DatabaseKmsKey]
+
+      # Database configuration
+      DBName: !Ref RdsDatabaseName
+      MasterUsername: !Ref RdsUsername
+      MasterUserPassword: !GetAtt RdsMasterPassword.SecretString
+
+      # Network configuration
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RdsSecurityGroup
+      AvailabilityZone: !If [EnableMultiAz, !Ref 'AWS::NoValue', !Select [0, !GetAZs '']]
+      MultiAZ: !Ref RdsMultiAz
+
+      # Parameter and option groups
+      DBParameterGroupName: !Ref RdsParameterGroup
+
+      # Backup configuration
+      BackupRetentionPeriod: !Ref RdsBackupRetentionPeriod
+      BackupWindow: '03:00-04:00'
+      DeleteAutomatedBackups: false
+
+      # Maintenance
+      MaintenanceWindow: 'sun:04:00-sun:05:00'
+      AutoMinorVersionUpgrade: true
+
+      # Deletion protection
+      DeletionProtection: !Ref RdsDeletionProtection
+
+      # Performance Insights
+      EnablePerformanceInsights: !Ref EnablePerformanceInsights
+      PerformanceInsightsRetentionPeriod: !If [EnablePerformanceInsights, 7, !Ref 'AWS::NoValue']
+      PerformanceInsightsKMSKeyId: !If [EnablePerformanceInsights, !If [UseProvidedKmsKey, !Ref KmsKeyId, !Ref DatabaseKmsKey], !Ref 'AWS::NoValue']
+
+      # Monitoring
+      MonitoringInterval: !If [EnableEnhancedMonitoring, 60, 0]
+      MonitoringRoleArn: !If [EnableEnhancedMonitoring, !GetAtt RdsMonitoringRole.Arn, !Ref 'AWS::NoValue']
+
+      # Logging
+      EnableCloudwatchLogsExports:
+        - postgresql
+        - upgrade
+
+      # IAM database authentication
+      EnableIAMDatabaseAuthentication: true
+
+      # Tags
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-postgres'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # RDS Master Password Secret
+  # ==============================================================================
+
+  RdsMasterPassword:
+    Type: Custom::Secret
+    Condition: CreateRds
+    Properties:
+      ServiceToken: !GetAtt SecretGeneratorFunction.Arn
+      SecretName: !Sub '${ProjectName}-${Environment}-rds-master-password'
+      Description: !Sub 'RDS master password for ${ProjectName} ${Environment}'
+      SecretString: !Sub |
+        {
+          "username": "${RdsUsername}",
+          "password": "{{resolve:secretsmanager:${AWS::SecretsManager.Secret.RdsMasterPassword.Name}:SecretString:password}}",
+          "host": "${RdsInstance.Endpoint.Address}",
+          "port": "${RdsInstance.Endpoint.Port}",
+          "database": "${RdsDatabaseName}",
+          "jdbc_url": "jdbc:postgresql://${RdsInstance.Endpoint.Address}:${RdsInstance.Endpoint.Port}/${RdsDatabaseName}"
+        }
+      KmsKeyId: !If [UseProvidedKmsKey, !Ref KmsKeyId, !Ref DatabaseKmsKey]
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-credentials'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  RdsMasterPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: CreateRds
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-rds-credentials'
+      Description: !Sub 'RDS credentials for ${ProjectName} ${Environment}'
+      KmsKeyId: !If [UseProvidedKmsKey, !Ref KmsKeyId, !Ref DatabaseKmsKey]
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username": "${RdsUsername}"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\'
+        ExcludePunctuation: true
+        IncludeSpace: false
+        RequireEachIncludedType: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-credentials'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # RDS Enhanced Monitoring Role
+  # ==============================================================================
+
+  RdsMonitoringRole:
+    Type: AWS::IAM::Role
+    Condition: EnableEnhancedMonitoring
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-rds-monitoring-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: monitoring.rds.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-monitoring-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # ElastiCache Security Group
+  # ==============================================================================
+
+  ElastiCacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateElastiCache
+    Properties:
+      GroupDescription: !Sub 'Security group for ElastiCache Redis - ${ProjectName} ${Environment}'
+      GroupName: !Sub '${ProjectName}-${Environment}-elasticache-sg'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref VpcCidr
+          Description: 'Redis access from VPC'
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6380
+          CidrIp: !Ref VpcCidr
+          Description: 'Redis cluster bus from VPC'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+          Description: 'Allow all outbound traffic'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-elasticache-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # ElastiCache Parameter Group
+  # ==============================================================================
+
+  ElastiCacheParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Condition: CreateElastiCache
+    Properties:
+      CacheParameterGroupFamily: !Sub 'redis${ElastiCacheEngineVersion}'
+      Description: !Sub 'Custom Redis parameter group for ${ProjectName} ${Environment}'
+      Properties:
+        maxmemory-policy: allkeys-lru
+        timeout: '300'
+        tcp-keepalive: '60'
+        maxmemory-samples: '10'
+        lazy-expire: 'yes'
+        lazyfree-lazy-eviction: 'yes'
+        lazyfree-lazy-expire: 'yes'
+        lazyfree-lazy-server-del: 'yes'
+        replica-serve-stale-data: 'yes'
+        replica-read-only: 'yes'
+
+  # ==============================================================================
+  # ElastiCache Redis Cluster
+  # ==============================================================================
+
+  ElastiCacheCluster:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Condition: CreateElastiCache
+    Properties:
+      ReplicationGroupId: !Sub '${ProjectName}-${Environment}-redis'
+      ReplicationGroupDescription: !Sub 'Redis cluster for ${ProjectName} ${Environment}'
+
+      # Engine configuration
+      Engine: redis
+      EngineVersion: !Ref ElastiCacheEngineVersion
+      CacheNodeType: !Ref ElastiCacheNodeType
+      NumCacheClusters: !Ref ElastiCacheNumCacheClusters
+      CacheParameterGroupName: !Ref ElastiCacheParameterGroup
+
+      # Cluster mode configuration
+      NumNodeGroups: !Ref ElastiCacheNumNodeGroups
+      ReplicasPerNodeGroup: !Ref ElastiCacheReplicasPerNodeGroup
+
+      # Network configuration
+      CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
+      SecurityGroupIds:
+        - !Ref ElastiCacheSecurityGroup
+
+      # High availability
+      AutomaticFailoverEnabled: !Ref ElastiCacheAutomaticFailover
+      MultiAZEnabled: !Ref ElastiCacheAutomaticFailover
+
+      # Encryption
+      AtRestEncryptionEnabled: !Ref EnableEncryption
+      TransitEncryptionEnabled: !Ref EnableEncryption
+      AuthToken: !GetAtt ElastiCacheAuthToken.SecretString
+      KmsKeyId: !If [UseProvidedKmsKey, !Ref KmsKeyId, !Ref DatabaseKmsKey]
+
+      # Snapshot configuration
+      SnapshotRetentionLimit: 30
+      SnapshotWindow: '02:00-03:00'
+
+      # Maintenance
+      MaintenanceWindow: 'sun:03:00-sun:04:00'
+
+      # Tags
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-redis'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # ElastiCache Auth Token Secret
+  # ==============================================================================
+
+  ElastiCacheAuthToken:
+    Type: AWS::SecretsManager::Secret
+    Condition: CreateElastiCache
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-redis-auth'
+      Description: !Sub 'Redis auth token for ${ProjectName} ${Environment}'
+      KmsKeyId: !If [UseProvidedKmsKey, !Ref KmsKeyId, !Ref DatabaseKmsKey]
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: 'auth_token'
+        PasswordLength: 64
+        ExcludeCharacters: '"@/\'
+        ExcludePunctuation: false
+        IncludeSpace: false
+        RequireEachIncludedType: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-redis-auth'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ElastiCacheConnectionSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: CreateElastiCache
+    DependsOn: ElastiCacheCluster
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-redis-connection'
+      Description: !Sub 'Redis connection details for ${ProjectName} ${Environment}'
+      KmsKeyId: !If [UseProvidedKmsKey, !Ref KmsKeyId, !Ref DatabaseKmsKey]
+      SecretString: !Sub |
+        {
+          "auth_token": "{{resolve:secretsmanager:${ElastiCacheAuthToken}:SecretString:auth_token}}",
+          "primary_endpoint": "${ElastiCacheCluster.PrimaryEndPoint.Address}",
+          "reader_endpoint": "${ElastiCacheCluster.ReaderEndPoint.Address}",
+          "port": 6379,
+          "connection_url": "redis://:{{resolve:secretsmanager:${ElastiCacheAuthToken}:SecretString:auth_token}}@${ElastiCacheCluster.PrimaryEndPoint.Address}:6379"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-redis-connection'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # CloudWatch Alarms - RDS
+  # ==============================================================================
+
+  RdsCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateRds
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-rds-cpu-utilization'
+      AlarmDescription: 'RDS CPU utilization is high'
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RdsInstance
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-cpu-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  RdsMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateRds
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-rds-freeable-memory'
+      AlarmDescription: 'RDS freeable memory is low'
+      Namespace: AWS/RDS
+      MetricName: FreeableMemory
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RdsInstance
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 268435456
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-memory-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  RdsStorageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateRds
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-rds-storage-space'
+      AlarmDescription: 'RDS free storage space is low'
+      Namespace: AWS/RDS
+      MetricName: FreeStorageSpace
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RdsInstance
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 5368709120
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-storage-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==============================================================================
+  # CloudWatch Alarms - ElastiCache
+  # ==============================================================================
+
+  ElastiCacheCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateElastiCache
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-elasticache-cpu-utilization'
+      AlarmDescription: 'ElastiCache CPU utilization is high'
+      Namespace: AWS/ElastiCache
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: CacheClusterId
+          Value: !Ref ElastiCacheCluster
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-elasticache-cpu-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  ElastiCacheMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateElastiCache
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-elasticache-freeable-memory'
+      AlarmDescription: 'ElastiCache freeable memory is low'
+      Namespace: AWS/ElastiCache
+      MetricName: FreeableMemory
+      Dimensions:
+        - Name: CacheClusterId
+          Value: !Ref ElastiCacheCluster
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 134217728
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-elasticache-memory-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+  ElastiCacheEvictionsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateElastiCache
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-elasticache-evictions'
+      AlarmDescription: 'ElastiCache evictions are high'
+      Namespace: AWS/ElastiCache
+      MetricName: Evictions
+      Dimensions:
+        - Name: CacheClusterId
+          Value: !Ref ElastiCacheCluster
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 1000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-elasticache-evictions-alarm'
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  # RDS Outputs
+  RdsInstanceId:
+    Condition: CreateRds
+    Description: 'RDS instance identifier'
+    Value: !Ref RdsInstance
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsInstanceId'
+
+  RdsInstanceEndpoint:
+    Condition: CreateRds
+    Description: 'RDS instance endpoint'
+    Value: !GetAtt RdsInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsInstanceEndpoint'
+
+  RdsInstanceAddress:
+    Condition: CreateRds
+    Description: 'RDS instance address'
+    Value: !GetAtt RdsInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsInstanceAddress'
+
+  RdsInstancePort:
+    Condition: CreateRds
+    Description: 'RDS instance port'
+    Value: !GetAtt RdsInstance.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsInstancePort'
+
+  RdsDatabaseName:
+    Condition: CreateRds
+    Description: 'RDS database name'
+    Value: !Ref RdsDatabaseName
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsDatabaseName'
+
+  RdsSecurityGroupId:
+    Condition: CreateRds
+    Description: 'RDS security group ID'
+    Value: !Ref RdsSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsSecurityGroupId'
+
+  RdsCredentialsSecretArn:
+    Condition: CreateRds
+    Description: 'RDS credentials secret ARN'
+    Value: !Ref RdsMasterPasswordSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsCredentialsSecretArn'
+
+  # ElastiCache Outputs
+  ElastiCacheClusterId:
+    Condition: CreateElastiCache
+    Description: 'ElastiCache cluster ID'
+    Value: !Ref ElastiCacheCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCacheClusterId'
+
+  ElastiCachePrimaryEndpoint:
+    Condition: CreateElastiCache
+    Description: 'ElastiCache primary endpoint'
+    Value: !GetAtt ElastiCacheCluster.PrimaryEndPoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCachePrimaryEndpoint'
+
+  ElastiCacheReaderEndpoint:
+    Condition: CreateElastiCache
+    Description: 'ElastiCache reader endpoint'
+    Value: !GetAtt ElastiCacheCluster.ReaderEndPoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCacheReaderEndpoint'
+
+  ElastiCachePort:
+    Condition: CreateElastiCache
+    Description: 'ElastiCache port'
+    Value: 6379
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCachePort'
+
+  ElastiCacheSecurityGroupId:
+    Condition: CreateElastiCache
+    Description: 'ElastiCache security group ID'
+    Value: !Ref ElastiCacheSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCacheSecurityGroupId'
+
+  ElastiCacheAuthTokenSecretArn:
+    Condition: CreateElastiCache
+    Description: 'ElastiCache auth token secret ARN'
+    Value: !Ref ElastiCacheAuthToken
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCacheAuthTokenSecretArn'
+
+  # KMS Key Output
+  DatabaseKmsKeyId:
+    Description: 'Database KMS key ID'
+    Value: !If [EnableRdsEncryption, !Ref DatabaseKmsKey, '']
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseKmsKeyId'
+
+  DatabaseKmsKeyArn:
+    Description: 'Database KMS key ARN'
+    Value: !If [EnableRdsEncryption, !GetAtt DatabaseKmsKey.Arn, '']
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseKmsKeyArn'

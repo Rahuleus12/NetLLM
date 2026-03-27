@@ -1,0 +1,1063 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AI Provider - Security Infrastructure
+
+  This template creates production-grade security infrastructure:
+  - KMS keys for encryption at rest
+  - IAM roles for various AWS services
+  - Security groups for network isolation
+  - Service-linked roles
+  - Cross-account access roles (optional)
+
+  Features:
+  - Encryption at rest with customer-managed KMS keys
+  - Least privilege IAM policies
+  - Network security with security groups
+  - Automatic key rotation
+  - Comprehensive audit logging
+
+  Author: AI Provider Platform Team
+  Version: 1.0.0'
+
+Metadata:
+  License: MIT
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'General Configuration'
+        Parameters:
+          - ProjectName
+          - Environment
+          - Owner
+      - Label:
+          default: 'Encryption Configuration'
+        Parameters:
+          - EnableEncryption
+          - EnableKeyRotation
+      - Label:
+          default: 'Network Configuration'
+        Parameters:
+          - VpcId
+          - VpcCidr
+          - AllowedSshCidrs
+          - AllowedApiCidrs
+      - Label:
+          default: 'Security Features'
+        Parameters:
+          - EnableGuardDuty
+          - EnableSecurityHub
+          - EnableConfig
+          - EnableCloudTrail
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'ai-provider'
+    Description: 'Name of the project'
+    AllowedPattern: '^[a-z0-9-]+$'
+    ConstraintDescription: 'Project name must contain only lowercase letters, numbers, and hyphens'
+
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  Owner:
+    Type: String
+    Default: 'DevOps'
+    Description: 'Owner of the resources'
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: 'VPC ID for security groups'
+
+  VpcCidr:
+    Type: String
+    Description: 'VPC CIDR block'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
+
+  EnableEncryption:
+    Type: String
+    Default: 'true'
+    Description: 'Enable encryption at rest with KMS'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableKeyRotation:
+    Type: String
+    Default: 'true'
+    Description: 'Enable automatic KMS key rotation'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  AllowedSshCidrs:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: 'CIDR blocks allowed SSH access (comma-separated)'
+
+  AllowedApiCidrs:
+    Type: CommaDelimitedList
+    Default: '0.0.0.0/0'
+    Description: 'CIDR blocks allowed API access (comma-separated)'
+
+  EnableGuardDuty:
+    Type: String
+    Default: 'true'
+    Description: 'Enable Amazon GuardDuty'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableSecurityHub:
+    Type: String
+    Default: 'true'
+    Description: 'Enable AWS Security Hub'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableConfig:
+    Type: String
+    Default: 'true'
+    Description: 'Enable AWS Config'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableCloudTrail:
+    Type: String
+    Default: 'true'
+    Description: 'Enable AWS CloudTrail'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  EnableEncryptionCondition: !Equals [!Ref EnableEncryption, 'true']
+  EnableKeyRotationCondition: !Equals [!Ref EnableKeyRotation, 'true']
+  EnableGuardDutyCondition: !Equals [!Ref EnableGuardDuty, 'true']
+  EnableSecurityHubCondition: !Equals [!Ref EnableSecurityHub, 'true']
+  EnableConfigCondition: !Equals [!Ref EnableConfig, 'true']
+  EnableCloudTrailCondition: !Equals [!Ref EnableCloudTrail, 'true']
+  HasAllowedSshCidrs: !Not [!Equals [!Join ['', !Ref AllowedSshCidrs], '']]
+
+Resources:
+  # ==============================================================================
+  # KMS Keys
+  # ==============================================================================
+
+  # Primary KMS Key for general encryption
+  PrimaryKmsKey:
+    Type: AWS::KMS::Key
+    Condition: EnableEncryptionCondition
+    Properties:
+      Description: !Sub 'Primary KMS key for ${ProjectName} ${Environment}'
+      Enabled: true
+      EnableKeyRotation: !Ref EnableKeyRotation
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowServices
+            Effect: Allow
+            Principal:
+              Service:
+                - eks.amazonaws.com
+                - rds.amazonaws.com
+                - elasticache.amazonaws.com
+                - s3.amazonaws.com
+                - secretsmanager.amazonaws.com
+                - cloudwatch.amazonaws.com
+                - logs.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:Encrypt
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+              - kms:ReEncrypt*
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-primary-key'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PrimaryKmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Condition: EnableEncryptionCondition
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-${Environment}-primary-key'
+      TargetKeyId: !Ref PrimaryKmsKey
+
+  # ==============================================================================
+  # Security Groups - EKS
+  # ==============================================================================
+
+  EksClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for EKS cluster - ${ProjectName} ${Environment}'
+      GroupName: !Sub '${ProjectName}-${Environment}-eks-cluster-sg'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+          Description: 'Allow all outbound traffic'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref EksNodeSecurityGroup
+          Description: 'Allow worker nodes to communicate with cluster API'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-eks-cluster-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  EksNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for EKS worker nodes - ${ProjectName} ${Environment}'
+      GroupName: !Sub '${ProjectName}-${Environment}-eks-node-sg'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+          Description: 'Allow all outbound traffic'
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          SourceSecurityGroupId: !Ref EksNodeSecurityGroup
+          Description: 'Allow nodes to communicate with each other'
+        - IpProtocol: tcp
+          FromPort: 1025
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref EksClusterSecurityGroup
+          Description: 'Allow cluster API to communicate with nodes'
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref EksClusterSecurityGroup
+          Description: 'Allow HTTPS traffic from cluster'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-eks-node-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # Security Groups - RDS
+  # ==============================================================================
+
+  RdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for RDS PostgreSQL - ${ProjectName} ${Environment}'
+      GroupName: !Sub '${ProjectName}-${Environment}-rds-sg'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+          Description: 'Allow all outbound traffic'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EksNodeSecurityGroup
+          Description: 'PostgreSQL from EKS cluster'
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref VpcCidr
+          Description: 'PostgreSQL from VPC'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-rds-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # Security Groups - ElastiCache
+  # ==============================================================================
+
+  ElastiCacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for ElastiCache Redis - ${ProjectName} ${Environment}'
+      GroupName: !Sub '${ProjectName}-${Environment}-elasticache-sg'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+          Description: 'Allow all outbound traffic'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref EksNodeSecurityGroup
+          Description: 'Redis from EKS cluster'
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6380
+          SourceSecurityGroupId: !Ref EksNodeSecurityGroup
+          Description: 'Redis cluster bus from EKS cluster'
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref VpcCidr
+          Description: 'Redis from VPC'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-elasticache-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # Security Groups - ALB/Ingress
+  # ==============================================================================
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Security group for Application Load Balancer - ${ProjectName} ${Environment}'
+      GroupName: !Sub '${ProjectName}-${Environment}-alb-sg'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+          Description: 'Allow all outbound traffic'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+          Description: 'HTTP from internet'
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: '0.0.0.0/0'
+          Description: 'HTTPS from internet'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-alb-sg'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # IAM Role - Application
+  # ==============================================================================
+
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-application-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ApplicationAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-*'
+                  - !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-*/*'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}-${Environment}-*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !If [EnableEncryptionCondition, !GetAtt PrimaryKmsKey.Arn, '*']
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: !Sub '${ProjectName}/Application'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-application-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # IAM Role - Lambda
+  # ==============================================================================
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-lambda-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: LambdaAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}-${Environment}-*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !If [EnableEncryptionCondition, !GetAtt PrimaryKmsKey.Arn, '*']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-lambda-execution-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # IAM Role - CloudWatch Monitoring
+  # ==============================================================================
+
+  CloudWatchMonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-cloudwatch-monitoring-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cloudwatch.amazonaws.com
+                - logs.amazonaws.com
+                - ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: CloudWatchAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:PutDashboard
+                  - cloudwatch:GetDashboard
+                  - cloudwatch:ListDashboards
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:GetLogEvents
+                  - logs:FilterLogEvents
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-cloudwatch-monitoring-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # IAM Role - Backup
+  # ==============================================================================
+
+  BackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-backup-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+      Policies:
+        - PolicyName: BackupAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-backups-*'
+                  - !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-backups-*/*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-backup-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # IAM Role - SSM Session Manager
+  # ==============================================================================
+
+  SsmSessionManagerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-ssm-session-manager-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ssm.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: SessionManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetEncryptionConfiguration
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-logs-*'
+                  - !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-logs-*/*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !If [EnableEncryptionCondition, !GetAtt PrimaryKmsKey.Arn, '*']
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-ssm-session-manager-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # AWS Config (Optional)
+  # ==============================================================================
+
+  ConfigRole:
+    Type: AWS::IAM::Role
+    Condition: EnableConfigCondition
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-config-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWS_ConfigRole
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-config-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Condition: EnableConfigCondition
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-config-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - !If
+            - EnableEncryptionCondition
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: aws:kms
+                KMSMasterKeyID: !Ref PrimaryKmsKey
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-config-bucket'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  ConfigBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: EnableConfigCondition
+    Properties:
+      Bucket: !Ref ConfigBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AWSConfigBucketPermissionsCheck
+            Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt ConfigBucket.Arn
+          - Sid: AWSConfigBucketDelivery
+            Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${ConfigBucket.Arn}/AWSLogs/${AWS::AccountId}/Config/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  ConfigurationRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Condition: EnableConfigCondition
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-config-recorder'
+      RoleARN: !GetAtt ConfigRole.Arn
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: true
+
+  DeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Condition: EnableConfigCondition
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-delivery-channel'
+      S3BucketName: !Ref ConfigBucket
+      SnsTopicARN: !Ref ConfigNotificationTopic
+
+  ConfigNotificationTopic:
+    Type: AWS::SNS::Topic
+    Condition: EnableConfigCondition
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-config-notifications'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-config-notifications'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # AWS CloudTrail (Optional)
+  # ==============================================================================
+
+  CloudTrailRole:
+    Type: AWS::IAM::Role
+    Condition: EnableCloudTrailCondition
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-cloudtrail-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: CloudTrailAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:GetObject
+                Resource:
+                  - !GetAtt CloudTrailBucket.Arn
+                  - !Sub '${CloudTrailBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey*
+                Resource: !If [EnableEncryptionCondition, !GetAtt PrimaryKmsKey.Arn, '*']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-cloudtrail-role'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  CloudTrailBucket:
+    Type: AWS::S3::Bucket
+    Condition: EnableCloudTrailCondition
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-cloudtrail-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - !If
+            - EnableEncryptionCondition
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: aws:kms
+                KMSMasterKeyID: !Ref PrimaryKmsKey
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-cloudtrail-bucket'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: EnableCloudTrailCondition
+    Properties:
+      Bucket: !Ref CloudTrailBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailBucket.Arn
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CloudTrailBucket.Arn}/AWSLogs/${AWS::AccountId}/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  CloudTrail:
+    Type: AWS::CloudTrail::Trail
+    Condition: EnableCloudTrailCondition
+    DependsOn: CloudTrailBucketPolicy
+    Properties:
+      TrailName: !Sub '${ProjectName}-${Environment}-trail'
+      S3BucketName: !Ref CloudTrailBucket
+      IsLogging: true
+      IsMultiRegionTrail: false
+      IncludeGlobalServiceEvents: true
+      EnableLogFileValidation: true
+      KMSKeyId: !If [EnableEncryptionCondition, !Ref PrimaryKmsKey, !Ref 'AWS::NoValue']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-cloudtrail'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==============================================================================
+  # AWS GuardDuty (Optional)
+  # ==============================================================================
+
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Condition: EnableGuardDutyCondition
+    Properties:
+      Enable: true
+      FindingPublishingFrequency: FIFTEEN_MINUTES
+
+  # ==============================================================================
+  # AWS Security Hub (Optional)
+  # ==============================================================================
+
+  SecurityHub:
+    Type: Custom::SecurityHub
+    Condition: EnableSecurityHubCondition
+    Properties:
+      ServiceToken: !GetAtt SecurityHubFunction.Arn
+      Region: !Ref AWS::Region
+
+  SecurityHubFunction:
+    Type: AWS::Lambda::Function
+    Condition: EnableSecurityHubCondition
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-security-hub-enabler'
+      Handler: index.handler
+      Role: !GetAtt SecurityHubFunctionRole.Arn
+      Runtime: python3.11
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+
+                  client = boto3.client('securityhub', region_name=event['ResourceProperties']['Region'])
+
+                  # Enable Security Hub
+                  response = client.enable_security_hub(
+                      EnableDefaultStandards=True
+                  )
+
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'SecurityHubArn': response['HubArn']
+                  })
+              except Exception as e:
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  SecurityHubFunctionRole:
+    Type: AWS::IAM::Role
+    Condition: EnableSecurityHubCondition
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-security-hub-function-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecurityHubAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - securityhub:EnableSecurityHub
+                  - securityhub:DescribeHub
+                Resource: '*'
+
+Outputs:
+  # KMS Outputs
+  KmsKeyId:
+    Description: 'Primary KMS key ID'
+    Value: !If [EnableEncryptionCondition, !Ref PrimaryKmsKey, '']
+    Export:
+      Name: !Sub '${AWS::StackName}-KmsKeyId'
+
+  KmsKeyArn:
+    Description: 'Primary KMS key ARN'
+    Value: !If [EnableEncryptionCondition, !GetAtt PrimaryKmsKey.Arn, '']
+    Export:
+      Name: !Sub '${AWS::StackName}-KmsKeyArn'
+
+  # Security Group Outputs
+  EksClusterSecurityGroupId:
+    Description: 'EKS cluster security group ID'
+    Value: !Ref EksClusterSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterSecurityGroupId'
+
+  EksNodeSecurityGroupId:
+    Description: 'EKS node security group ID'
+    Value: !Ref EksNodeSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-EksNodeSecurityGroupId'
+
+  RdsSecurityGroupId:
+    Description: 'RDS security group ID'
+    Value: !Ref RdsSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsSecurityGroupId'
+
+  ElastiCacheSecurityGroupId:
+    Description: 'ElastiCache security group ID'
+    Value: !Ref ElastiCacheSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCacheSecurityGroupId'
+
+  AlbSecurityGroupId:
+    Description: 'ALB security group ID'
+    Value: !Ref AlbSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-AlbSecurityGroupId'
+
+  # IAM Role Outputs
+  ApplicationRoleArn:
+    Description: 'Application IAM role ARN'
+    Value: !GetAtt ApplicationRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ApplicationRoleArn'
+
+  LambdaExecutionRoleArn:
+    Description: 'Lambda execution IAM role ARN'
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaExecutionRoleArn'
+
+  CloudWatchMonitoringRoleArn:
+    Description: 'CloudWatch monitoring IAM role ARN'
+    Value: !GetAtt CloudWatchMonitoringRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudWatchMonitoringRoleArn'
+
+  BackupRoleArn:
+    Description: 'Backup IAM role ARN'
+    Value: !GetAtt BackupRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupRoleArn'
+
+  SsmSessionManagerRoleArn:
+    Description: 'SSM Session Manager IAM role ARN'
+    Value: !GetAtt SsmSessionManagerRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-SsmSessionManagerRoleArn'
+
+  # Security Services Outputs
+  GuardDutyDetectorId:
+    Description: 'GuardDuty detector ID'
+    Value: !If [EnableGuardDutyCondition, !Ref GuardDutyDetector, '']
+    Export:
+      Name: !Sub '${AWS::StackName}-GuardDutyDetectorId'
+
+  ConfigBucketName:
+    Description: 'AWS Config S3 bucket name'
+    Value: !If [EnableConfigCondition, !Ref ConfigBucket, '']
+    Export:
+      Name: !Sub '${AWS::StackName}-ConfigBucketName'
+
+  CloudTrailBucketName:
+    Description: 'AWS CloudTrail S3 bucket name'
+    Value: !If [EnableCloudTrailCondition, !Ref CloudTrailBucket, '']
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudTrailBucketName'
+
+  CloudTrailArn:
+    Description: 'AWS CloudTrail ARN'
+    Value: !If [EnableCloudTrailCondition, !GetAtt CloudTrail.Arn, '']
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudTrailArn'
+
+  # Summary
+  SecuritySummary:
+    Description: 'Security infrastructure summary'
+    Value: !Sub |
+      ========================================================================
+      Security Infrastructure Summary
+      ========================================================================
+
+      Project:        ${ProjectName}
+      Environment:    ${Environment}
+      Region:         ${AWS::Region}
+      Account ID:     ${AWS::AccountId}
+
+      ------------------------------------------------------------------------
+      Encryption
+      ------------------------------------------------------------------------
+      KMS Enabled:    ${EnableEncryption}
+      Key Rotation:   ${EnableKeyRotation}
+      KMS Key ID:     ${PrimaryKmsKey}
+
+      ------------------------------------------------------------------------
+      Security Groups
+      ------------------------------------------------------------------------
+      EKS Cluster:    ${EksClusterSecurityGroup}
+      EKS Nodes:      ${EksNodeSecurityGroup}
+      RDS:            ${RdsSecurityGroup}
+      ElastiCache:    ${ElastiCacheSecurityGroup}
+      ALB:            ${AlbSecurityGroup}
+
+      ------------------------------------------------------------------------
+      IAM Roles
+      ------------------------------------------------------------------------
+      Application:    ${ApplicationRole}
+      Lambda:         ${LambdaExecutionRole}
+      CloudWatch:     ${CloudWatchMonitoringRole}
+      Backup:         ${BackupRole}
+      SSM:            ${SsmSessionManagerRole}
+
+      ------------------------------------------------------------------------
+      Security Services
+      ------------------------------------------------------------------------
+      GuardDuty:      ${EnableGuardDuty}
+      Security Hub:   ${EnableSecurityHub}
+      AWS Config:     ${EnableConfig}
+      CloudTrail:     ${EnableCloudTrail}
+
+      ========================================================================

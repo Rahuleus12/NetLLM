@@ -1,0 +1,193 @@
+# Kustomization for AI Provider GitOps Deployment with ArgoCD
+# This file defines the resources and customizations for deploying AI Provider via GitOps
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Metadata
+metadata:
+  name: ai-provider
+  namespace: ai-provider
+
+# Namespace to deploy resources into
+namespace: ai-provider
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: ai-provider
+  app.kubernetes.io/part-of: ai-provider-platform
+  app.kubernetes.io/managed-by: argocd
+  app.kubernetes.io/component: application
+  environment: production
+
+# Common annotations applied to all resources
+commonAnnotations:
+  argocd.argoproj.io/sync-wave: "0"
+  app.kubernetes.io/version: "1.0.0"
+  contact: "platform-team@example.com"
+
+# Resources to include (relative paths from this file)
+resources:
+  # Core infrastructure
+  - ../../kubernetes/manifests/00-namespace.yaml
+  - ../../kubernetes/manifests/01-configmap.yaml
+  - ../../kubernetes/manifests/02-secrets.yaml
+
+  # Database layer
+  - ../../kubernetes/manifests/03-postgres.yaml
+
+  # Cache layer
+  - ../../kubernetes/manifests/04-redis.yaml
+
+  # Application layer
+  - ../../kubernetes/manifests/05-deployment.yaml
+  - ../../kubernetes/manifests/06-service.yaml
+  - ../../kubernetes/manifests/07-ingress.yaml
+
+  # RBAC
+  - ../../kubernetes/manifests/08-rbac.yaml
+
+  # Storage
+  - ../../kubernetes/manifests/09-storage.yaml
+
+  # Network security
+  - ../../kubernetes/manifests/10-networkpolicy.yaml
+
+  # Monitoring
+  - ../../kubernetes/manifests/11-monitoring.yaml
+
+  # Custom Resource Definitions
+  - ../../kubernetes/crds/ai-model-crd.yaml
+
+# Patches for GitOps-specific customizations
+patches:
+  # Patch deployment for GitOps
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ai-provider
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+          argocd.argoproj.io/sync-wave: "2"
+      spec:
+        template:
+          metadata:
+            annotations:
+              argocd.argoproj.io/sync-wave: "2"
+
+  # Patch PostgreSQL for GitOps
+  - patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: postgres
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+          argocd.argoproj.io/sync-wave: "1"
+      spec:
+        template:
+          metadata:
+            annotations:
+              argocd.argoproj.io/sync-wave: "1"
+
+  # Patch Redis for GitOps
+  - patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: redis
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+          argocd.argoproj.io/sync-wave: "1"
+      spec:
+        template:
+          metadata:
+            annotations:
+              argocd.argoproj.io/sync-wave: "1"
+
+# ConfigMap generator for GitOps-specific configurations
+configMapGenerator:
+  - name: ai-provider-gitops-config
+    namespace: ai-provider
+    behavior: merge
+    literals:
+      - DEPLOYMENT_METHOD=gitops
+      - ARGOCD_ENABLED=true
+      - FLUX_ENABLED=false
+      - GITOPS_BRANCH=main
+      - GITOPS_REPO=https://github.com/ai-provider/ai-provider.git
+      - AUTO_SYNC_ENABLED=true
+      - AUTO_SYNC_PRUNE=true
+      - SELF_HEAL_ENABLED=true
+
+# Secret generator for GitOps credentials
+secretGenerator:
+  - name: ai-provider-gitops-secrets
+    namespace: ai-provider
+    type: Opaque
+    behavior: merge
+    literals:
+      - GITOPS_SYNC_TIMEOUT=300
+      - GITOPS_RETRY_COUNT=3
+      - GITOPS_RETRY_DELAY=5
+
+# Images for customization
+images:
+  - name: ai-provider
+    newName: ai-provider/ai-provider
+    newTag: v1.0.0
+
+  - name: postgres
+    newName: postgres
+    newTag: 15.4-alpine
+
+  - name: redis
+    newName: redis
+    newTag: 7.2-alpine
+
+# Replica customization
+replicas:
+  - name: ai-provider
+    count: 3
+
+# Variable substitution (if needed)
+vars:
+  - name: NAMESPACE
+    objref:
+      kind: Namespace
+      name: ai-provider
+      apiVersion: v1
+    fieldref:
+      fieldpath: metadata.name
+
+# Build metadata
+buildMetadata:
+  - originAnnotations
+  - managedByLabel
+
+# Transformers for custom modifications
+transformers:
+  - |-
+    apiVersion: builtin
+    kind: PrefixSuffixTransformer
+    metadata:
+      name: notUsed
+    prefix: ""
+    suffix: ""
+
+# Validation settings
+openapi:
+  path: https://raw.githubusercontent.com/kubernetes/kubernetes/master/api/openapi-spec/swagger.json
+
+# Generator options
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    kustomize.generated: "true"
+
+# Configurations for kustomize behavior
+configurations:
+  - kustomize-config.yaml

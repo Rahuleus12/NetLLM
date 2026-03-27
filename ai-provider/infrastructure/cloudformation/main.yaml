@@ -1,0 +1,838 @@
+# ==============================================================================
+# AI Provider - CloudFormation Master Template
+# ==============================================================================
+# This is the master CloudFormation template that orchestrates all nested stacks
+# for deploying the AI Provider infrastructure on AWS.
+#
+# Usage:
+#   aws cloudformation create-stack \
+#     --stack-name ai-provider-infrastructure \
+#     --template-body file://main.yaml \
+#     --parameters file://parameters.yaml \
+#     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND
+#
+# ==============================================================================
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AI Provider Platform - Master Infrastructure Template (Production-Grade)'
+
+# ==============================================================================
+# Metadata
+# ==============================================================================
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'General Configuration'
+        Parameters:
+          - ProjectName
+          - Environment
+          - Owner
+          - CostCenter
+      - Label:
+          default: 'Network Configuration'
+        Parameters:
+          - VpcCidr
+          - AvailabilityZones
+          - PublicSubnetCidrs
+          - PrivateSubnetCidrs
+          - DatabaseSubnetCidrs
+          - EnableNatGateway
+          - SingleNatGateway
+      - Label:
+          default: 'EKS Configuration'
+        Parameters:
+          - EksClusterName
+          - EksClusterVersion
+          - EksNodeInstanceTypes
+          - EksNodeDesiredCapacity
+          - EksNodeMinSize
+          - EksNodeMaxSize
+          - EksGpuNodeInstanceTypes
+          - EksGpuNodeDesiredCapacity
+          - EksGpuNodeMinSize
+          - EksGpuNodeMaxSize
+      - Label:
+          default: 'Database Configuration'
+        Parameters:
+          - RdsEnabled
+          - RdsInstanceClass
+          - RdsEngineVersion
+          - RdsAllocatedStorage
+          - RdsMaxAllocatedStorage
+          - RdsMultiAz
+          - RdsUsername
+          - RdsDatabaseName
+      - Label:
+          default: 'Cache Configuration'
+        Parameters:
+          - ElastiCacheEnabled
+          - ElastiCacheNodeType
+          - ElastiCacheEngineVersion
+          - ElastiCacheNumCacheClusters
+          - ElastiCacheNumNodeGroups
+          - ElastiCacheReplicasPerNodeGroup
+      - Label:
+          default: 'Security Configuration'
+        Parameters:
+          - EnableEncryption
+          - EnableVpcFlowLogs
+          - EnableGuardDuty
+          - EnableSecurityHub
+      - Label:
+          default: 'Monitoring Configuration'
+        Parameters:
+          - EnableCloudWatchAlarms
+          - EnableCloudWatchDashboard
+          - CloudWatchLogRetentionDays
+          - AlertEmailAddresses
+    ParameterLabels:
+      ProjectName:
+        default: 'Project Name'
+      Environment:
+        default: 'Environment'
+      Owner:
+        default: 'Owner'
+      CostCenter:
+        default: 'Cost Center'
+
+# ==============================================================================
+# Parameters
+# ==============================================================================
+Parameters:
+  # General Configuration
+  ProjectName:
+    Type: String
+    Default: 'ai-provider'
+    Description: 'Name of the project (used in resource naming)'
+    AllowedPattern: '^[a-z0-9-]+$'
+    ConstraintDescription: 'Must contain only lowercase letters, numbers, and hyphens'
+
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name (dev, staging, prod)'
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  Owner:
+    Type: String
+    Default: 'DevOps'
+    Description: 'Owner of the resources'
+
+  CostCenter:
+    Type: String
+    Default: 'Engineering'
+    Description: 'Cost center for billing'
+
+  # Network Configuration
+  VpcCidr:
+    Type: String
+    Default: '10.0.0.0/16'
+    Description: 'CIDR block for VPC'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
+
+  AvailabilityZones:
+    Type: CommaDelimitedList
+    Default: 'us-east-1a,us-east-1b,us-east-1c'
+    Description: 'List of availability zones (comma-separated)'
+
+  PublicSubnetCidrs:
+    Type: CommaDelimitedList
+    Default: '10.0.1.0/24,10.0.2.0/24,10.0.3.0/24'
+    Description: 'CIDR blocks for public subnets (comma-separated)'
+
+  PrivateSubnetCidrs:
+    Type: CommaDelimitedList
+    Default: '10.0.10.0/24,10.0.11.0/24,10.0.12.0/24'
+    Description: 'CIDR blocks for private subnets (comma-separated)'
+
+  DatabaseSubnetCidrs:
+    Type: CommaDelimitedList
+    Default: '10.0.20.0/24,10.0.21.0/24,10.0.22.0/24'
+    Description: 'CIDR blocks for database subnets (comma-separated)'
+
+  EnableNatGateway:
+    Type: String
+    Default: 'true'
+    Description: 'Enable NAT Gateway for private subnets'
+    AllowedValues:
+      - true
+      - false
+
+  SingleNatGateway:
+    Type: String
+    Default: 'false'
+    Description: 'Use a single NAT Gateway (cost savings for dev/staging)'
+    AllowedValues:
+      - true
+      - false
+
+  # EKS Configuration
+  EksClusterName:
+    Type: String
+    Default: ''
+    Description: 'Name of EKS cluster (leave empty to auto-generate)'
+
+  EksClusterVersion:
+    Type: String
+    Default: '1.28'
+    Description: 'Kubernetes version for EKS cluster'
+    AllowedValues:
+      - '1.25'
+      - '1.26'
+      - '1.27'
+      - '1.28'
+      - '1.29'
+
+  EksNodeInstanceTypes:
+    Type: CommaDelimitedList
+    Default: 'm5.large,m5.xlarge'
+    Description: 'EC2 instance types for EKS general nodes (comma-separated)'
+
+  EksNodeDesiredCapacity:
+    Type: Number
+    Default: 3
+    Description: 'Desired number of EKS general nodes'
+    MinValue: 1
+    MaxValue: 100
+
+  EksNodeMinSize:
+    Type: Number
+    Default: 2
+    Description: 'Minimum number of EKS general nodes'
+    MinValue: 1
+    MaxValue: 100
+
+  EksNodeMaxSize:
+    Type: Number
+    Default: 10
+    Description: 'Maximum number of EKS general nodes'
+    MinValue: 1
+    MaxValue: 100
+
+  EksGpuNodeInstanceTypes:
+    Type: CommaDelimitedList
+    Default: 'g4dn.xlarge,g4dn.2xlarge'
+    Description: 'EC2 instance types for EKS GPU nodes (comma-separated)'
+
+  EksGpuNodeDesiredCapacity:
+    Type: Number
+    Default: 2
+    Description: 'Desired number of EKS GPU nodes'
+    MinValue: 0
+    MaxValue: 50
+
+  EksGpuNodeMinSize:
+    Type: Number
+    Default: 1
+    Description: 'Minimum number of EKS GPU nodes'
+    MinValue: 0
+    MaxValue: 50
+
+  EksGpuNodeMaxSize:
+    Type: Number
+    Default: 5
+    Description: 'Maximum number of EKS GPU nodes'
+    MinValue: 0
+    MaxValue: 50
+
+  # RDS Configuration
+  RdsEnabled:
+    Type: String
+    Default: 'true'
+    Description: 'Enable RDS PostgreSQL instance'
+    AllowedValues:
+      - true
+      - false
+
+  RdsInstanceClass:
+    Type: String
+    Default: 'db.r6g.large'
+    Description: 'Instance class for RDS PostgreSQL'
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.t3.large
+      - db.r6g.large
+      - db.r6g.xlarge
+      - db.r6g.2xlarge
+      - db.r6g.4xlarge
+
+  RdsEngineVersion:
+    Type: String
+    Default: '15.4'
+    Description: 'PostgreSQL engine version'
+
+  RdsAllocatedStorage:
+    Type: Number
+    Default: 100
+    Description: 'Allocated storage in GB'
+    MinValue: 20
+    MaxValue: 16384
+
+  RdsMaxAllocatedStorage:
+    Type: Number
+    Default: 1000
+    Description: 'Maximum allocated storage for autoscaling (GB)'
+    MinValue: 100
+    MaxValue: 65536
+
+  RdsMultiAz:
+    Type: String
+    Default: 'true'
+    Description: 'Enable Multi-AZ deployment for RDS'
+    AllowedValues:
+      - true
+      - false
+
+  RdsUsername:
+    Type: String
+    Default: 'ai_provider_admin'
+    Description: 'Master username for RDS'
+    NoEcho: true
+
+  RdsDatabaseName:
+    Type: String
+    Default: 'ai_provider'
+    Description: 'Database name'
+
+  # ElastiCache Configuration
+  ElastiCacheEnabled:
+    Type: String
+    Default: 'true'
+    Description: 'Enable ElastiCache Redis cluster'
+    AllowedValues:
+      - true
+      - false
+
+  ElastiCacheNodeType:
+    Type: String
+    Default: 'cache.r6g.large'
+    Description: 'Node type for ElastiCache Redis'
+    AllowedValues:
+      - cache.t3.micro
+      - cache.t3.small
+      - cache.t3.medium
+      - cache.r6g.large
+      - cache.r6g.xlarge
+      - cache.r6g.2xlarge
+
+  ElastiCacheEngineVersion:
+    Type: String
+    Default: '7.0'
+    Description: 'Redis engine version'
+
+  ElastiCacheNumCacheClusters:
+    Type: Number
+    Default: 2
+    Description: 'Number of cache clusters'
+    MinValue: 1
+    MaxValue: 500
+
+  ElastiCacheNumNodeGroups:
+    Type: Number
+    Default: 2
+    Description: 'Number of node groups (shards) for cluster mode'
+    MinValue: 1
+    MaxValue: 500
+
+  ElastiCacheReplicasPerNodeGroup:
+    Type: Number
+    Default: 1
+    Description: 'Number of replicas per node group'
+    MinValue: 0
+    MaxValue: 5
+
+  # Security Configuration
+  EnableEncryption:
+    Type: String
+    Default: 'true'
+    Description: 'Enable encryption at rest for all services'
+    AllowedValues:
+      - true
+      - false
+
+  EnableVpcFlowLogs:
+    Type: String
+    Default: 'true'
+    Description: 'Enable VPC flow logs'
+    AllowedValues:
+      - true
+      - false
+
+  EnableGuardDuty:
+    Type: String
+    Default: 'true'
+    Description: 'Enable Amazon GuardDuty'
+    AllowedValues:
+      - true
+      - false
+
+  EnableSecurityHub:
+    Type: String
+    Default: 'true'
+    Description: 'Enable AWS Security Hub'
+    AllowedValues:
+      - true
+      - false
+
+  # Monitoring Configuration
+  EnableCloudWatchAlarms:
+    Type: String
+    Default: 'true'
+    Description: 'Enable CloudWatch alarms'
+    AllowedValues:
+      - true
+      - false
+
+  EnableCloudWatchDashboard:
+    Type: String
+    Default: 'true'
+    Description: 'Enable CloudWatch dashboard'
+    AllowedValues:
+      - true
+      - false
+
+  CloudWatchLogRetentionDays:
+    Type: Number
+    Default: 30
+    Description: 'Number of days to retain CloudWatch logs'
+    AllowedValues:
+      - 1
+      - 3
+      - 5
+      - 7
+      - 14
+      - 30
+      - 60
+      - 90
+      - 120
+      - 150
+      - 180
+      - 365
+      - 400
+      - 545
+      - 731
+      - 1827
+      - 3653
+
+  AlertEmailAddresses:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: 'Email addresses for alerts (comma-separated)'
+
+# ==============================================================================
+# Conditions
+# ==============================================================================
+Conditions:
+  CreateProdResources: !Equals [!Ref Environment, 'prod']
+  CreateNatGateway: !Equals [!Ref EnableNatGateway, 'true']
+  CreateSingleNatGateway: !Equals [!Ref SingleNatGateway, 'true']
+  CreateRds: !Equals [!Ref RdsEnabled, 'true']
+  CreateElastiCache: !Equals [!Ref ElastiCacheEnabled, 'true']
+  CreateCloudWatchAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
+  CreateCloudWatchDashboard: !Equals [!Ref EnableCloudWatchDashboard, 'true']
+  EnableEncryption: !Equals [!Ref EnableEncryption, 'true']
+  EnableVpcFlowLogs: !Equals [!Ref EnableVpcFlowLogs, 'true']
+
+# ==============================================================================
+# Resources - Nested Stacks
+# ==============================================================================
+Resources:
+  # Networking Stack
+  NetworkingStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./networking.yaml
+      TimeoutInMinutes: 30
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        VpcCidr: !Ref VpcCidr
+        AvailabilityZones: !Ref AvailabilityZones
+        PublicSubnetCidrs: !Ref PublicSubnetCidrs
+        PrivateSubnetCidrs: !Ref PrivateSubnetCidrs
+        DatabaseSubnetCidrs: !Ref DatabaseSubnetCidrs
+        EnableNatGateway: !Ref EnableNatGateway
+        SingleNatGateway: !Ref SingleNatGateway
+        EnableVpcFlowLogs: !Ref EnableVpcFlowLogs
+        Tags:
+          - Key: Project
+            Value: !Ref ProjectName
+          - Key: Environment
+            Value: !Ref Environment
+          - Key: ManagedBy
+            Value: CloudFormation
+
+  # Security Stack
+  SecurityStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: NetworkingStack
+    Properties:
+      TemplateURL: ./security.yaml
+      TimeoutInMinutes: 15
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        VpcId: !GetAtt NetworkingStack.Outputs.VpcId
+        VpcCidr: !Ref VpcCidr
+        EnableEncryption: !Ref EnableEncryption
+        Tags:
+          - Key: Project
+            Value: !Ref ProjectName
+          - Key: Environment
+            Value: !Ref Environment
+
+  # Compute Stack (EKS)
+  ComputeStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - NetworkingStack
+      - SecurityStack
+    Properties:
+      TemplateURL: ./compute.yaml
+      TimeoutInMinutes: 60
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        EksClusterName: !Ref EksClusterName
+        EksClusterVersion: !Ref EksClusterVersion
+        VpcId: !GetAtt NetworkingStack.Outputs.VpcId
+        PrivateSubnetIds: !GetAtt NetworkingStack.Outputs.PrivateSubnetIds
+        PublicSubnetIds: !GetAtt NetworkingStack.Outputs.PublicSubnetIds
+        EksNodeInstanceTypes: !Ref EksNodeInstanceTypes
+        EksNodeDesiredCapacity: !Ref EksNodeDesiredCapacity
+        EksNodeMinSize: !Ref EksNodeMinSize
+        EksNodeMaxSize: !Ref EksNodeMaxSize
+        EksGpuNodeInstanceTypes: !Ref EksGpuNodeInstanceTypes
+        EksGpuNodeDesiredCapacity: !Ref EksGpuNodeDesiredCapacity
+        EksGpuNodeMinSize: !Ref EksGpuNodeMinSize
+        EksGpuNodeMaxSize: !Ref EksGpuNodeMaxSize
+        ClusterSecurityGroupId: !GetAtt SecurityStack.Outputs.EksClusterSecurityGroupId
+        NodeSecurityGroupId: !GetAtt SecurityStack.Outputs.EksNodeSecurityGroupId
+        KmsKeyId: !GetAtt SecurityStack.Outputs.KmsKeyId
+        Tags:
+          - Key: Project
+            Value: !Ref ProjectName
+          - Key: Environment
+            Value: !Ref Environment
+
+  # Database Stack (RDS & ElastiCache)
+  DatabaseStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateRds
+    DependsOn:
+      - NetworkingStack
+      - SecurityStack
+    Properties:
+      TemplateURL: ./database.yaml
+      TimeoutInMinutes: 45
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        VpcId: !GetAtt NetworkingStack.Outputs.VpcId
+        DatabaseSubnetIds: !GetAtt NetworkingStack.Outputs.DatabaseSubnetIds
+        RdsEnabled: !Ref RdsEnabled
+        RdsInstanceClass: !Ref RdsInstanceClass
+        RdsEngineVersion: !Ref RdsEngineVersion
+        RdsAllocatedStorage: !Ref RdsAllocatedStorage
+        RdsMaxAllocatedStorage: !Ref RdsMaxAllocatedStorage
+        RdsMultiAz: !Ref RdsMultiAz
+        RdsUsername: !Ref RdsUsername
+        RdsDatabaseName: !Ref RdsDatabaseName
+        ElastiCacheEnabled: !Ref ElastiCacheEnabled
+        ElastiCacheNodeType: !Ref ElastiCacheNodeType
+        ElastiCacheEngineVersion: !Ref ElastiCacheEngineVersion
+        ElastiCacheNumCacheClusters: !Ref ElastiCacheNumCacheClusters
+        ElastiCacheNumNodeGroups: !Ref ElastiCacheNumNodeGroups
+        ElastiCacheReplicasPerNodeGroup: !Ref ElastiCacheReplicasPerNodeGroup
+        RdsSecurityGroupId: !GetAtt SecurityStack.Outputs.RdsSecurityGroupId
+        ElastiCacheSecurityGroupId: !GetAtt SecurityStack.Outputs.ElastiCacheSecurityGroupId
+        KmsKeyId: !GetAtt SecurityStack.Outputs.KmsKeyId
+        Tags:
+          - Key: Project
+            Value: !Ref ProjectName
+          - Key: Environment
+            Value: !Ref Environment
+
+  # Storage Stack (S3)
+  StorageStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: SecurityStack
+    Properties:
+      TemplateURL: ./storage.yaml
+      TimeoutInMinutes: 15
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        EnableEncryption: !Ref EnableEncryption
+        KmsKeyId: !GetAtt SecurityStack.Outputs.KmsKeyId
+        Tags:
+          - Key: Project
+            Value: !Ref ProjectName
+          - Key: Environment
+            Value: !Ref Environment
+
+  # Monitoring Stack (CloudWatch)
+  MonitoringStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateCloudWatchAlarms
+    DependsOn:
+      - ComputeStack
+      - DatabaseStack
+    Properties:
+      TemplateURL: ./monitoring.yaml
+      TimeoutInMinutes: 20
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        EksClusterName: !GetAtt ComputeStack.Outputs.EksClusterName
+        RdsInstanceId: !If [CreateRds, !GetAtt DatabaseStack.Outputs.RdsInstanceId, '']
+        ElastiCacheClusterId: !If [CreateElastiCache, !GetAtt DatabaseStack.Outputs.ElastiCacheClusterId, '']
+        EnableCloudWatchAlarms: !Ref EnableCloudWatchAlarms
+        EnableCloudWatchDashboard: !Ref EnableCloudWatchDashboard
+        CloudWatchLogRetentionDays: !Ref CloudWatchLogRetentionDays
+        AlertEmailAddresses: !Ref AlertEmailAddresses
+        Tags:
+          - Key: Project
+            Value: !Ref ProjectName
+          - Key: Environment
+            Value: !Ref Environment
+
+# ==============================================================================
+# Outputs
+# ==============================================================================
+Outputs:
+  # General
+  ProjectName:
+    Description: 'Project name'
+    Value: !Ref ProjectName
+    Export:
+      Name: !Sub '${AWS::StackName}-ProjectName'
+
+  Environment:
+    Description: 'Environment name'
+    Value: !Ref Environment
+    Export:
+      Name: !Sub '${AWS::StackName}-Environment'
+
+  # Networking Outputs
+  VpcId:
+    Description: 'VPC ID'
+    Value: !GetAtt NetworkingStack.Outputs.VpcId
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcId'
+
+  VpcCidr:
+    Description: 'VPC CIDR block'
+    Value: !GetAtt NetworkingStack.Outputs.VpcCidr
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcCidr'
+
+  PublicSubnetIds:
+    Description: 'List of public subnet IDs'
+    Value: !GetAtt NetworkingStack.Outputs.PublicSubnetIds
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnetIds'
+
+  PrivateSubnetIds:
+    Description: 'List of private subnet IDs'
+    Value: !GetAtt NetworkingStack.Outputs.PrivateSubnetIds
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnetIds'
+
+  DatabaseSubnetIds:
+    Description: 'List of database subnet IDs'
+    Value: !GetAtt NetworkingStack.Outputs.DatabaseSubnetIds
+    Export:
+      Name: !Sub '${AWS::StackName}-DatabaseSubnetIds'
+
+  NatGatewayPublicIps:
+    Description: 'Public IPs of NAT Gateways'
+    Value: !GetAtt NetworkingStack.Outputs.NatGatewayPublicIps
+    Export:
+      Name: !Sub '${AWS::StackName}-NatGatewayPublicIps'
+
+  # EKS Outputs
+  EksClusterName:
+    Description: 'EKS cluster name'
+    Value: !GetAtt ComputeStack.Outputs.EksClusterName
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterName'
+
+  EksClusterArn:
+    Description: 'EKS cluster ARN'
+    Value: !GetAtt ComputeStack.Outputs.EksClusterArn
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterArn'
+
+  EksClusterEndpoint:
+    Description: 'EKS cluster endpoint'
+    Value: !GetAtt ComputeStack.Outputs.EksClusterEndpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterEndpoint'
+
+  EksClusterVersion:
+    Description: 'EKS cluster Kubernetes version'
+    Value: !GetAtt ComputeStack.Outputs.EksClusterVersion
+    Export:
+      Name: !Sub '${AWS::StackName}-EksClusterVersion'
+
+  EksOidcIssuerUrl:
+    Description: 'EKS cluster OIDC issuer URL'
+    Value: !GetAtt ComputeStack.Outputs.EksOidcIssuerUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-EksOidcIssuerUrl'
+
+  EksKubectlConfigCommand:
+    Description: 'Command to configure kubectl'
+    Value: !Sub 'aws eks update-kubeconfig --name ${ComputeStack.Outputs.EksClusterName} --region ${AWS::Region}'
+
+  # RDS Outputs
+  RdsInstanceEndpoint:
+    Description: 'RDS instance endpoint'
+    Value: !If [CreateRds, !GetAtt DatabaseStack.Outputs.RdsInstanceEndpoint, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsInstanceEndpoint'
+
+  RdsInstanceAddress:
+    Description: 'RDS instance address'
+    Value: !If [CreateRds, !GetAtt DatabaseStack.Outputs.RdsInstanceAddress, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsInstanceAddress'
+
+  RdsDatabaseName:
+    Description: 'RDS database name'
+    Value: !If [CreateRds, !GetAtt DatabaseStack.Outputs.RdsDatabaseName, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsDatabaseName'
+
+  RdsCredentialsSecretArn:
+    Description: 'ARN of Secrets Manager secret containing DB credentials'
+    Value: !If [CreateRds, !GetAtt DatabaseStack.Outputs.RdsCredentialsSecretArn, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsCredentialsSecretArn'
+
+  # ElastiCache Outputs
+  ElastiCachePrimaryEndpoint:
+    Description: 'ElastiCache primary endpoint'
+    Value: !If [CreateElastiCache, !GetAtt DatabaseStack.Outputs.ElastiCachePrimaryEndpoint, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCachePrimaryEndpoint'
+
+  ElastiCacheReaderEndpoint:
+    Description: 'ElastiCache reader endpoint'
+    Value: !If [CreateElastiCache, !GetAtt DatabaseStack.Outputs.ElastiCacheReaderEndpoint, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCacheReaderEndpoint'
+
+  ElastiCacheAuthTokenSecretArn:
+    Description: 'ARN of Secrets Manager secret containing Redis auth token'
+    Value: !If [CreateElastiCache, !GetAtt DatabaseStack.Outputs.ElastiCacheAuthTokenSecretArn, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-ElastiCacheAuthTokenSecretArn'
+
+  # S3 Outputs
+  S3ModelsBucketName:
+    Description: 'S3 bucket name for models'
+    Value: !GetAtt StorageStack.Outputs.ModelsBucketName
+    Export:
+      Name: !Sub '${AWS::StackName}-S3ModelsBucketName'
+
+  S3CacheBucketName:
+    Description: 'S3 bucket name for cache'
+    Value: !GetAtt StorageStack.Outputs.CacheBucketName
+    Export:
+      Name: !Sub '${AWS::StackName}-S3CacheBucketName'
+
+  S3BackupsBucketName:
+    Description: 'S3 bucket name for backups'
+    Value: !GetAtt StorageStack.Outputs.BackupsBucketName
+    Export:
+      Name: !Sub '${AWS::StackName}-S3BackupsBucketName'
+
+  S3LogsBucketName:
+    Description: 'S3 bucket name for logs'
+    Value: !GetAtt StorageStack.Outputs.LogsBucketName
+    Export:
+      Name: !Sub '${AWS::StackName}-S3LogsBucketName'
+
+  # Security Outputs
+  KmsKeyId:
+    Description: 'KMS key ID for encryption'
+    Value: !GetAtt SecurityStack.Outputs.KmsKeyId
+    Export:
+      Name: !Sub '${AWS::StackName}-KmsKeyId'
+
+  KmsKeyArn:
+    Description: 'KMS key ARN for encryption'
+    Value: !GetAtt SecurityStack.Outputs.KmsKeyArn
+    Export:
+      Name: !Sub '${AWS::StackName}-KmsKeyArn'
+
+  # Monitoring Outputs
+  CloudWatchDashboardName:
+    Description: 'Name of CloudWatch dashboard'
+    Value: !If [CreateCloudWatchDashboard, !GetAtt MonitoringStack.Outputs.DashboardName, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudWatchDashboardName'
+
+  SnsTopicArn:
+    Description: 'ARN of SNS topic for alerts'
+    Value: !If [CreateCloudWatchAlarms, !GetAtt MonitoringStack.Outputs.SnsTopicArn, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-SnsTopicArn'
+
+  # Summary
+  DeploymentSummary:
+    Description: 'Infrastructure deployment summary'
+    Value: !Sub |
+      ========================================================================
+      AI Provider Infrastructure Summary
+      ========================================================================
+
+      Project:        ${ProjectName}
+      Environment:    ${Environment}
+      Region:         ${AWS::Region}
+      Account ID:     ${AWS::AccountId}
+
+      ------------------------------------------------------------------------
+      Network
+      ------------------------------------------------------------------------
+      VPC ID:         ${NetworkingStack.Outputs.VpcId}
+      VPC CIDR:       ${NetworkingStack.Outputs.VpcCidr}
+      Public Subnets: ${NetworkingStack.Outputs.PublicSubnetIds}
+      Private Subnets: ${NetworkingStack.Outputs.PrivateSubnetIds}
+
+      ------------------------------------------------------------------------
+      Kubernetes
+      ------------------------------------------------------------------------
+      Cluster Name:   ${ComputeStack.Outputs.EksClusterName}
+      Cluster Version: ${ComputeStack.Outputs.EksClusterVersion}
+
+      Configure kubectl:
+      aws eks update-kubeconfig --name ${ComputeStack.Outputs.EksClusterName} --region ${AWS::Region}
+
+      ------------------------------------------------------------------------
+      Database (RDS)
+      ------------------------------------------------------------------------
+      Endpoint:       ${DatabaseStack.Outputs.RdsInstanceEndpoint}
+      Database:       ${DatabaseStack.Outputs.RdsDatabaseName}
+
+      ------------------------------------------------------------------------
+      Cache (ElastiCache)
+      ------------------------------------------------------------------------
+      Primary:        ${DatabaseStack.Outputs.ElastiCachePrimaryEndpoint}
+      Reader:         ${DatabaseStack.Outputs.ElastiCacheReaderEndpoint}
+
+      ------------------------------------------------------------------------
+      Storage (S3)
+      ------------------------------------------------------------------------
+      Models Bucket:      ${StorageStack.Outputs.ModelsBucketName}
+      Backups Bucket:     ${StorageStack.Outputs.BackupsBucketName}
+
+      ========================================================================

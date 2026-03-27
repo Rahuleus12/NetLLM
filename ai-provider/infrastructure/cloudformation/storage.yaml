@@ -1,0 +1,645 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AI Provider - S3 Storage Infrastructure
+
+  This template creates production-grade S3 buckets for:
+  - AI Model storage
+  - Cache storage
+  - Backup storage
+  - Log storage
+  - CI/CD artifacts
+
+  Features:
+  - Server-side encryption with KMS
+  - Versioning for critical data
+  - Lifecycle policies for cost optimization
+  - Access logging
+  - Public access blocking
+  - Bucket policies for security
+
+  Author: AI Provider Platform Team
+  Version: 1.0.0'
+
+Metadata:
+  License: MIT
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'General Configuration'
+        Parameters:
+          - ProjectName
+          - Environment
+      - Label:
+          default: 'Encryption Configuration'
+        Parameters:
+          - EnableEncryption
+          - KmsKeyId
+      - Label:
+          default: 'Lifecycle Configuration'
+        Parameters:
+          - EnableLifecyclePolicies
+          - TransitionToIADays
+          - TransitionToGlacierDays
+          - ExpirationDays
+      - Label:
+          default: 'Versioning Configuration'
+        Parameters:
+          - EnableVersioningModels
+          - EnableVersioningBackups
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'ai-provider'
+    Description: 'Name of the project'
+    AllowedPattern: '^[a-z0-9-]+$'
+    ConstraintDescription: 'Project name must contain only lowercase letters, numbers, and hyphens'
+
+  Environment:
+    Type: String
+    Default: 'dev'
+    Description: 'Environment name'
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  EnableEncryption:
+    Type: String
+    Default: 'true'
+    Description: 'Enable server-side encryption for all buckets'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  KmsKeyId:
+    Type: String
+    Default: ''
+    Description: 'KMS Key ID for encryption (leave empty to create new key)'
+
+  EnableLifecyclePolicies:
+    Type: String
+    Default: 'true'
+    Description: 'Enable S3 lifecycle policies'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  TransitionToIADays:
+    Type: Number
+    Default: 90
+    Description: 'Days before transitioning to IA storage class'
+    MinValue: 30
+    MaxValue: 365
+
+  TransitionToGlacierDays:
+    Type: Number
+    Default: 180
+    Description: 'Days before transitioning to Glacier storage class'
+    MinValue: 60
+    MaxValue: 730
+
+  ExpirationDays:
+    Type: Number
+    Default: 365
+    Description: 'Days before expiring objects'
+    MinValue: 90
+    MaxValue: 2555
+
+  EnableVersioningModels:
+    Type: String
+    Default: 'true'
+    Description: 'Enable versioning for models bucket'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableVersioningBackups:
+    Type: String
+    Default: 'true'
+    Description: 'Enable versioning for backups bucket'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  EnableEncryptionCondition: !Equals [!Ref EnableEncryption, 'true']
+  CreateKmsKey: !And
+    - !Equals [!Ref EnableEncryption, 'true']
+    - !Equals [!Ref KmsKeyId, '']
+  EnableLifecycleCondition: !Equals [!Ref EnableLifecyclePolicies, 'true']
+  EnableVersioningModelsCondition: !Equals [!Ref EnableVersioningModels, 'true']
+  EnableVersioningBackupsCondition: !Equals [!Ref EnableVersioningBackups, 'true']
+
+Resources:
+  # ==============================================================================
+  # KMS Key for S3 Encryption
+  # ==============================================================================
+
+  S3KmsKey:
+    Type: AWS::KMS::Key
+    Condition: CreateKmsKey
+    Properties:
+      Description: !Sub 'KMS key for S3 bucket encryption - ${ProjectName} ${Environment}'
+      Enabled: true
+      EnableKeyRotation: true
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowS3Service
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey*
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-s3-key'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  S3KmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Condition: CreateKmsKey
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-${Environment}-s3-key'
+      TargetKeyId: !Ref S3KmsKey
+
+  # ==============================================================================
+  # S3 Buckets
+  # ==============================================================================
+
+  # Models Bucket
+  ModelsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-models-${AWS::AccountId}'
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: !If [EnableVersioningModelsCondition, Enabled, Suspended]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - !If
+            - EnableEncryptionCondition
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: aws:kms
+                KMSMasterKeyID: !If [CreateKmsKey, !Ref S3KmsKey, !Ref KmsKeyId]
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-models'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: 'AI model storage'
+        - Key: BucketType
+          Value: models
+
+  # Cache Bucket
+  CacheBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-cache-${AWS::AccountId}'
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - !If
+            - EnableEncryptionCondition
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: aws:kms
+                KMSMasterKeyID: !If [CreateKmsKey, !Ref S3KmsKey, !Ref KmsKeyId]
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-cache'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: 'Cache storage'
+        - Key: BucketType
+          Value: cache
+
+  # Backups Bucket
+  BackupsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-backups-${AWS::AccountId}'
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: !If [EnableVersioningBackupsCondition, Enabled, Suspended]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - !If
+            - EnableEncryptionCondition
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: aws:kms
+                KMSMasterKeyID: !If [CreateKmsKey, !Ref S3KmsKey, !Ref KmsKeyId]
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-backups'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: 'Backup storage'
+        - Key: BucketType
+          Value: backups
+
+  # Logs Bucket
+  LogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-logs-${AWS::AccountId}'
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - !If
+            - EnableEncryptionCondition
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: aws:kms
+                KMSMasterKeyID: !If [CreateKmsKey, !Ref S3KmsKey, !Ref KmsKeyId]
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-logs'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: 'Log storage'
+        - Key: BucketType
+          Value: logs
+
+  # Artifacts Bucket
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-artifacts-${AWS::AccountId}'
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - !If
+            - EnableEncryptionCondition
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: aws:kms
+                KMSMasterKeyID: !If [CreateKmsKey, !Ref S3KmsKey, !Ref KmsKeyId]
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, HEAD, PUT, POST, DELETE]
+            AllowedOrigins: ['*']
+            ExposedHeaders: [ETag, x-amz-server-side-encryption]
+            MaxAgeSeconds: 3000
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-artifacts'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: 'CI/CD artifacts'
+        - Key: BucketType
+          Value: artifacts
+
+  # ==============================================================================
+  # S3 Lifecycle Configurations
+  # ==============================================================================
+
+  ModelsBucketLifecycle:
+    Type: AWS::S3::BucketLifecycleConfiguration
+    Condition: EnableLifecycleCondition
+    Properties:
+      Bucket: !Ref ModelsBucket
+      Rules:
+        - ID: TransitionToIA
+          Status: Enabled
+          Transitions:
+            - StorageClass: STANDARD_IA
+              TransitionInDays: !Ref TransitionToIADays
+            - StorageClass: GLACIER
+              TransitionInDays: !Ref TransitionToGlacierDays
+          ExpirationInDays: !Ref ExpirationDays
+          NoncurrentVersionTransitions:
+            - StorageClass: STANDARD_IA
+              TransitionInDays: 30
+          NoncurrentVersionExpirationInDays: 90
+        - ID: AbortIncompleteMultipartUpload
+          Status: Enabled
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 7
+
+  CacheBucketLifecycle:
+    Type: AWS::S3::BucketLifecycleConfiguration
+    Condition: EnableLifecycleCondition
+    Properties:
+      Bucket: !Ref CacheBucket
+      Rules:
+        - ID: ExpireOldCache
+          Status: Enabled
+          ExpirationInDays: 30
+          NoncurrentVersionExpirationInDays: 7
+        - ID: AbortIncompleteMultipartUpload
+          Status: Enabled
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 3
+
+  BackupsBucketLifecycle:
+    Type: AWS::S3::BucketLifecycleConfiguration
+    Condition: EnableLifecycleCondition
+    Properties:
+      Bucket: !Ref BackupsBucket
+      Rules:
+        - ID: TransitionToGlacier
+          Status: Enabled
+          Transitions:
+            - StorageClass: STANDARD_IA
+              TransitionInDays: 30
+            - StorageClass: GLACIER
+              TransitionInDays: 90
+            - StorageClass: DEEP_ARCHIVE
+              TransitionInDays: 365
+          ExpirationInDays: 2555
+          NoncurrentVersionTransitions:
+            - StorageClass: GLACIER
+              TransitionInDays: 30
+          NoncurrentVersionExpirationInDays: 90
+        - ID: AbortIncompleteMultipartUpload
+          Status: Enabled
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 7
+
+  LogsBucketLifecycle:
+    Type: AWS::S3::BucketLifecycleConfiguration
+    Condition: EnableLifecycleCondition
+    Properties:
+      Bucket: !Ref LogsBucket
+      Rules:
+        - ID: ExpireOldLogs
+          Status: Enabled
+          Transitions:
+            - StorageClass: STANDARD_IA
+              TransitionInDays: 30
+            - StorageClass: GLACIER
+              TransitionInDays: 90
+          ExpirationInDays: 90
+        - ID: AbortIncompleteMultipartUpload
+          Status: Enabled
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 3
+
+  ArtifactsBucketLifecycle:
+    Type: AWS::S3::BucketLifecycleConfiguration
+    Condition: EnableLifecycleCondition
+    Properties:
+      Bucket: !Ref ArtifactsBucket
+      Rules:
+        - ID: ExpireOldArtifacts
+          Status: Enabled
+          ExpirationInDays: 90
+          NoncurrentVersionTransitions:
+            - StorageClass: STANDARD_IA
+              TransitionInDays: 30
+          NoncurrentVersionExpirationInDays: 60
+        - ID: AbortIncompleteMultipartUpload
+          Status: Enabled
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 7
+
+  # ==============================================================================
+  # S3 Bucket Policies
+  # ==============================================================================
+
+  ModelsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ModelsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyIncorrectEncryptionHeader
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${ModelsBucket.Arn}/*'
+            Condition:
+              StringNotEquals:
+                s3:x-amz-server-side-encryption: !If [EnableEncryptionCondition, aws:kms, AES256]
+          - Sid: DenyUnEncryptedObjectUploads
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${ModelsBucket.Arn}/*'
+            Condition:
+              Null:
+                s3:x-amz-server-side-encryption: true
+          - Sid: EnforceTLS
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt ModelsBucket.Arn
+              - !Sub '${ModelsBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  BackupsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BackupsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyIncorrectEncryptionHeader
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${BackupsBucket.Arn}/*'
+            Condition:
+              StringNotEquals:
+                s3:x-amz-server-side-encryption: !If [EnableEncryptionCondition, aws:kms, AES256]
+          - Sid: DenyUnEncryptedObjectUploads
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${BackupsBucket.Arn}/*'
+            Condition:
+              Null:
+                s3:x-amz-server-side-encryption: true
+          - Sid: EnforceTLS
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt BackupsBucket.Arn
+              - !Sub '${BackupsBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  # ==============================================================================
+  # S3 Bucket Logging
+  # ==============================================================================
+
+  ModelsBucketLogging:
+    Type: AWS::S3::BucketLogging
+    Properties:
+      Bucket: !Ref ModelsBucket
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LogsBucket
+        LogFilePrefix: 's3-access-logs/models/'
+
+  CacheBucketLogging:
+    Type: AWS::S3::BucketLogging
+    Properties:
+      Bucket: !Ref CacheBucket
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LogsBucket
+        LogFilePrefix: 's3-access-logs/cache/'
+
+  BackupsBucketLogging:
+    Type: AWS::S3::BucketLogging
+    Properties:
+      Bucket: !Ref BackupsBucket
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LogsBucket
+        LogFilePrefix: 's3-access-logs/backups/'
+
+  ArtifactsBucketLogging:
+    Type: AWS::S3::BucketLogging
+    Properties:
+      Bucket: !Ref ArtifactsBucket
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LogsBucket
+        LogFilePrefix: 's3-access-logs/artifacts/'
+
+Outputs:
+  ModelsBucketName:
+    Description: 'S3 bucket name for models'
+    Value: !Ref ModelsBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-ModelsBucketName'
+
+  ModelsBucketArn:
+    Description: 'S3 bucket ARN for models'
+    Value: !GetAtt ModelsBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ModelsBucketArn'
+
+  CacheBucketName:
+    Description: 'S3 bucket name for cache'
+    Value: !Ref CacheBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-CacheBucketName'
+
+  CacheBucketArn:
+    Description: 'S3 bucket ARN for cache'
+    Value: !GetAtt CacheBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CacheBucketArn'
+
+  BackupsBucketName:
+    Description: 'S3 bucket name for backups'
+    Value: !Ref BackupsBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupsBucketName'
+
+  BackupsBucketArn:
+    Description: 'S3 bucket ARN for backups'
+    Value: !GetAtt BackupsBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupsBucketArn'
+
+  LogsBucketName:
+    Description: 'S3 bucket name for logs'
+    Value: !Ref LogsBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-LogsBucketName'
+
+  LogsBucketArn:
+    Description: 'S3 bucket ARN for logs'
+    Value: !GetAtt LogsBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LogsBucketArn'
+
+  ArtifactsBucketName:
+    Description: 'S3 bucket name for artifacts'
+    Value: !Ref ArtifactsBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-ArtifactsBucketName'
+
+  ArtifactsBucketArn:
+    Description: 'S3 bucket ARN for artifacts'
+    Value: !GetAtt ArtifactsBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ArtifactsBucketArn'
+
+  KmsKeyId:
+    Description: 'KMS key ID for S3 encryption'
+    Value: !If [CreateKmsKey, !Ref S3KmsKey, !Ref KmsKeyId]
+    Export:
+      Name: !Sub '${AWS::StackName}-S3KmsKeyId'
+
+  KmsKeyArn:
+    Description: 'KMS key ARN for S3 encryption'
+    Value: !If [CreateKmsKey, !GetAtt S3KmsKey.Arn, !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}']
+    Export:
+      Name: !Sub '${AWS::StackName}-S3KmsKeyArn'

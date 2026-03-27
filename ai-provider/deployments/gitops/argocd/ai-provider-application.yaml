@@ -1,0 +1,339 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ai-provider
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: gitops
+    app.kubernetes.io/part-of: ai-provider-platform
+    app.kubernetes.io/managed-by: argocd
+  annotations:
+    description: "AI Provider - Local AI Model Management Platform"
+    argocd.argoproj.io/sync-wave: "0"
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: ai-provider-deployments
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: ai-provider-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: ai-provider-critical
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Project configuration
+  project: ai-provider-project
+
+  # Source repository configuration
+  source:
+    repoURL: https://github.com/ai-provider/ai-provider.git
+    targetRevision: main
+    path: deployments/kubernetes/helm
+
+    # Helm specific configuration
+    helm:
+      releaseName: ai-provider
+      valueFiles:
+        - values.yaml
+        - values-prod.yaml
+
+      # Parameters to override values
+      parameters:
+        - name: image.tag
+          value: "1.0.0"
+        - name: replicaCount
+          value: "3"
+
+      # File parameters
+      fileParameters:
+        - name: global.imagePullSecrets
+          path: config/image-pull-secrets.yaml
+
+      # Skip CRDs
+      skipCrds: false
+
+      # Pass credentials
+      passCredentials: false
+
+  # Destination cluster and namespace
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai-provider
+
+  # Sync policy
+  syncPolicy:
+    # Automated sync
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+
+    # Sync options
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+      - RespectIgnoreDifferences=true
+      - ServerSideApply=true
+
+    # Retry configuration
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Ignore differences
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+      jsonPointers:
+        - /spec/minReplicas
+        - /spec/maxReplicas
+    - group: ""
+      kind: Secret
+      jsonPointers:
+        - /data
+
+  # Info
+  info:
+    - name: Description
+      value: "AI Provider Platform - Production Deployment"
+    - name: Team
+      value: "Platform Team"
+    - name: Documentation
+      value: "https://docs.ai-provider.io"
+    - name: Support
+      value: "platform-team@example.com"
+
+  # Revision history limit
+  revisionHistoryLimit: 10
+
+---
+# ArgoCD Project for AI Provider
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ai-provider-project
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: gitops-project
+    app.kubernetes.io/part-of: ai-provider-platform
+  annotations:
+    description: "ArgoCD Project for AI Provider Platform"
+spec:
+  # Project description
+  description: "AI Provider Platform - Local AI Model Management"
+
+  # Source repositories
+  sourceRepos:
+    - 'https://github.com/ai-provider/*'
+    - 'https://charts.bitnami.com/*'
+    - 'https://prometheus-community.github.io/helm-charts'
+    - 'https://grafana.github.io/helm-charts'
+
+  # Destination clusters and namespaces
+  destinations:
+    - namespace: ai-provider
+      server: https://kubernetes.default.svc
+    - namespace: ai-provider-*
+      server: https://kubernetes.default.svc
+    - namespace: monitoring
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+
+  # Cluster resource allow list
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+    - group: ''
+      kind: PersistentVolume
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: storage.k8s.io
+      kind: StorageClass
+    - group: networking.k8s.io
+      kind: IngressClass
+    - group: policy
+      kind: PodSecurityPolicy
+
+  # Namespace resource allow list
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+
+  # Namespace resource blacklist
+  namespaceResourceBlacklist:
+    - group: ''
+      kind: ResourceQuota
+    - group: ''
+      kind: LimitRange
+
+  # Roles
+  roles:
+    - name: admin
+      description: "Admin role for AI Provider project"
+      policies:
+        - p, proj:ai-provider-project:admin, applications, *, ai-provider-project/*, allow
+        - p, proj:ai-provider-project:admin, repositories, *, ai-provider-project/*, allow
+        - p, proj:ai-provider-project:admin, clusters, *, ai-provider-project/*, allow
+        - p, proj:ai-provider-project:admin, logs, *, ai-provider-project/*, allow
+        - p, proj:ai-provider-project:admin, exec, *, ai-provider-project/*, allow
+      groups:
+        - ai-provider:admins
+
+    - name: developer
+      description: "Developer role for AI Provider project"
+      policies:
+        - p, proj:ai-provider-project:developer, applications, get, ai-provider-project/*, allow
+        - p, proj:ai-provider-project:developer, applications, sync, ai-provider-project/*, allow
+        - p, proj:ai-provider-project:developer, logs, get, ai-provider-project/*, allow
+      groups:
+        - ai-provider:developers
+
+    - name: viewer
+      description: "View-only role for AI Provider project"
+      policies:
+        - p, proj:ai-provider-project:viewer, applications, get, ai-provider-project/*, allow
+        - p, proj:ai-provider-project:viewer, logs, get, ai-provider-project/*, allow
+      groups:
+        - ai-provider:viewers
+
+  # Sync windows
+  syncWindows:
+    - kind: allow
+      schedule: '0 9 * * *'
+      duration: 8h
+      applications:
+        - 'ai-provider'
+      namespaces:
+        - ai-provider
+      clusters:
+        - https://kubernetes.default.svc
+      manualSync: true
+
+    - kind: deny
+      schedule: '0 17 * * *'
+      duration: 16h
+      applications:
+        - 'ai-provider-*'
+      namespaces:
+        - ai-provider
+      clusters:
+        - https://kubernetes.default.svc
+
+  # Signature keys
+  signatureKeys:
+    - keyID: "ai-provider-signing-key"
+
+  # Orphaned resources
+  orphanedResources:
+    warn: true
+    ignore:
+      - group: '*'
+        kind: Secret
+        name: '*'
+      - group: '*'
+        kind: ConfigMap
+        name: '*'
+
+---
+# ApplicationSet for multi-environment deployment
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: ai-provider-environments
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: ai-provider
+    app.kubernetes.io/component: gitops-appset
+    app.kubernetes.io/part-of: ai-provider-platform
+spec:
+  generators:
+    # List generator for environments
+    - list:
+        elements:
+          - env: development
+            namespace: ai-provider-dev
+            repoRevision: develop
+            replicas: "1"
+            resourcesRequestsCpu: "250m"
+            resourcesRequestsMemory: "512Mi"
+            resourcesLimitsCpu: "500m"
+            resourcesLimitsMemory: "1Gi"
+          - env: staging
+            namespace: ai-provider-staging
+            repoRevision: staging
+            replicas: "2"
+            resourcesRequestsCpu: "500m"
+            resourcesRequestsMemory: "1Gi"
+            resourcesLimitsCpu: "1000m"
+            resourcesLimitsMemory: "2Gi"
+          - env: production
+            namespace: ai-provider
+            repoRevision: main
+            replicas: "3"
+            resourcesRequestsCpu: "1000m"
+            resourcesRequestsMemory: "2Gi"
+            resourcesLimitsCpu: "2000m"
+            resourcesLimitsMemory: "4Gi"
+
+  template:
+    metadata:
+      name: 'ai-provider-{{env}}'
+      labels:
+        app.kubernetes.io/name: ai-provider
+        app.kubernetes.io/instance: '{{env}}'
+        app.kubernetes.io/component: gitops
+        app.kubernetes.io/part-of: ai-provider-platform
+        environment: '{{env}}'
+      annotations:
+        description: "AI Provider - {{env}} environment"
+    spec:
+      project: ai-provider-project
+      source:
+        repoURL: https://github.com/ai-provider/ai-provider.git
+        targetRevision: '{{repoRevision}}'
+        path: deployments/kubernetes/helm
+        helm:
+          releaseName: ai-provider
+          valueFiles:
+            - values.yaml
+            - 'values-{{env}}.yaml'
+          parameters:
+            - name: replicaCount
+              value: '{{replicas}}'
+            - name: resources.requests.cpu
+              value: '{{resourcesRequestsCpu}}'
+            - name: resources.requests.memory
+              value: '{{resourcesRequestsMemory}}'
+            - name: resources.limits.cpu
+              value: '{{resourcesLimitsCpu}}'
+            - name: resources.limits.memory
+              value: '{{resourcesLimitsMemory}}'
+            - name: global.environment
+              value: '{{env}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+          - PruneLast=true
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/replicas
