@@ -1,0 +1,1964 @@
+openapi: 3.0.3
+
+info:
+  title: Netllm AI Provider API
+  description: |
+    A network-accessible, containerized local AI provider platform that runs AI
+    models with full management capabilities, API access, and enterprise-grade
+    features.
+
+    ## Authentication
+
+    All API endpoints (except health/readiness/version/ping) require authentication
+    when enabled. Two methods are supported:
+
+    - **API Key**: Send your key in the `X-API-Key` header.
+    - **Bearer Token**: Send a JWT in the `Authorization: Bearer <token>` header.
+
+    ## Rate Limiting
+
+    API requests are rate-limited per key. Check the `X-RateLimit-Limit` and
+    `X-RateLimit-Remaining` response headers for current limits.
+
+    ## Errors
+
+    All errors follow a consistent format:
+    ```json
+    {
+      "error": {
+        "message": "Human-readable error description",
+        "type": "error_type",
+        "code": "HTTP_STATUS_CODE"
+      }
+    }
+    ```
+  version: 1.0.0
+  contact:
+    name: Netllm Contributors
+    url: https://github.com/netllm/ai-provider
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://api.netllm.io
+    description: Production server (placeholder)
+
+tags:
+  - name: System
+    description: Health checks, version info, and system diagnostics
+  - name: Inference
+    description: Run inference on registered AI models
+  - name: Models
+    description: Register, download, configure, and manage AI models
+  - name: Authentication
+    description: API key and JWT-based authentication
+
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------------------
+  # System Endpoints
+  # ---------------------------------------------------------------------------
+
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      description: |
+        Returns the health status of the service including component-level checks.
+        Used by load balancers and orchestrators for health monitoring.
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: healthy
+                timestamp: "2025-03-27T12:00:00Z"
+                uptime: 2h30m15s
+                version: 1.0.0
+                checks:
+                  runtime:
+                    status: healthy
+                    duration: 0ms
+                    details:
+                      goroutines: 42
+                      heap_alloc: "156.3 MB"
+                      gc_count: 128
+        '503':
+          description: Service is degraded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      operationId: getReadiness
+      summary: Readiness check
+      description: |
+        Returns whether the service is ready to accept traffic.
+        Checks goroutine count, memory pressure, and initialization state.
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+              example:
+                ready: true
+                timestamp: "2025-03-27T12:00:00Z"
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+              example:
+                ready: false
+                timestamp: "2025-03-27T12:00:00Z"
+                reasons:
+                  - service still initializing
+
+  /version:
+    get:
+      operationId: getVersion
+      summary: Version information
+      description: Returns version, build time, git commit, and Go runtime information.
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Version information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+              example:
+                version: 1.0.0
+                build_time: "2025-03-27T10:00:00Z"
+                git_commit: abc1234
+                go_version: go1.22.0
+                os: linux
+                arch: amd64
+
+  /ping:
+    get:
+      operationId: ping
+      summary: Lightweight liveness check
+      description: Returns a simple pong response for lightweight health checking.
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Pong response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: pong
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /api/v1/system/info:
+    get:
+      operationId: getSystemInfo
+      summary: Detailed system information
+      description: |
+        Returns comprehensive system information including Go runtime details,
+        memory statistics, garbage collection stats, host information, and build metadata.
+      tags: [System]
+      responses:
+        '200':
+          description: System information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemInfoResponse'
+
+  /api/v1/system/diagnostics:
+    get:
+      operationId: getDiagnostics
+      summary: Full diagnostics snapshot
+      description: |
+        Returns a comprehensive diagnostics snapshot combining version, system,
+        health, and configuration data for troubleshooting.
+      tags: [System]
+      responses:
+        '200':
+          description: Diagnostics snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiagnosticsResponse'
+
+  /api/v1/system/metrics:
+    get:
+      operationId: getSystemMetrics
+      summary: System and runtime metrics
+      description: Returns memory, runtime, and request metrics in a structured format.
+      tags: [System]
+      responses:
+        '200':
+          description: System metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
+
+  # ---------------------------------------------------------------------------
+  # Inference Endpoints
+  # ---------------------------------------------------------------------------
+
+  /api/v1/inference/{model_id}:
+    post:
+      operationId: executeInference
+      summary: Synchronous inference
+      description: |
+        Run synchronous inference on the specified model. Provide either a `prompt`
+        (string) or `messages` (chat format) in the request body.
+
+        The request blocks until inference completes and returns the full response.
+        For long-running requests, consider using the async or streaming endpoints.
+      tags: [Inference]
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InferenceRequest'
+            examples:
+              completion:
+                summary: Text completion
+                value:
+                  prompt: "Explain quantum computing in simple terms."
+                  max_tokens: 256
+                  temperature: 0.7
+                  top_p: 0.9
+                  top_k: 40
+              chat:
+                summary: Chat completion
+                value:
+                  messages:
+                    - role: system
+                      content: "You are a helpful assistant."
+                    - role: user
+                      content: "What is artificial intelligence?"
+                  max_tokens: 512
+                  temperature: 0.7
+      responses:
+        '200':
+          description: Inference completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InferenceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/inference/{model_id}/async:
+    post:
+      operationId: executeInferenceAsync
+      summary: Asynchronous inference
+      description: |
+        Submit an asynchronous inference request. Returns immediately with a request ID
+        that can be used to poll for the result using `GET /api/v1/inference/requests/{request_id}`.
+      tags: [Inference]
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InferenceRequest'
+      responses:
+        '202':
+          description: Inference request accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncInferenceResponse'
+              example:
+                id: req_abc123def456
+                model_id: llama-3-8b
+                status: processing
+                created_at: "2025-03-27T12:00:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/inference/{model_id}/stream:
+    post:
+      operationId: streamInference
+      summary: Streaming inference (SSE)
+      description: |
+        Run streaming inference using Server-Sent Events (SSE). The client receives
+        events in this order:
+
+        1. `connected` event with model and request IDs
+        2. `chunk` events containing partial content
+        3. `usage` event with token usage statistics
+        4. `done` event signalling completion
+        5. `error` event if something goes wrong
+      tags: [Inference]
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InferenceRequest'
+      responses:
+        '200':
+          description: SSE stream of inference chunks
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-Sent Events stream
+              example: |
+                event: connected
+                data: {"model_id":"llama-3-8b","request_id":"req_abc123"}
+
+                event: chunk
+                data: {"id":"resp_1","delta":"Hello","content":"Hello","output_tokens":1,"input_tokens":10}
+
+                event: chunk
+                data: {"id":"resp_1","delta":" world","content":"Hello world","output_tokens":2,"input_tokens":10}
+
+                event: usage
+                data: {"request_id":"req_abc123","input_tokens":10,"output_tokens":2,"total_tokens":12,"latency_ms":150,"tokens_per_sec":13.3}
+
+                event: done
+                data: {"request_id":"req_abc123","finish_reason":"stop"}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/inference/batch:
+    post:
+      operationId: executeBatchInference
+      summary: Batch inference
+      description: |
+        Submit a batch of up to 100 inference requests for parallel processing.
+        Each request in the batch can have its own prompt or messages.
+      tags: [Inference]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchInferenceRequest'
+            example:
+              model: llama-3-8b
+              requests:
+                - prompt: "What is AI?"
+                  max_tokens: 128
+                - prompt: "What is machine learning?"
+                  max_tokens: 128
+                - prompt: "What is deep learning?"
+                  max_tokens: 128
+              priority: 5
+      responses:
+        '200':
+          description: Batch inference completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchInferenceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/inference/requests:
+    get:
+      operationId: listActiveRequests
+      summary: List active inference requests
+      description: Returns all currently active (queued or processing) inference requests.
+      tags: [Inference]
+      responses:
+        '200':
+          description: List of active requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RequestStatus'
+                  count:
+                    type: integer
+                    example: 3
+
+  /api/v1/inference/requests/{request_id}:
+    get:
+      operationId: getInferenceStatus
+      summary: Get inference request status
+      description: |
+        Returns the current status of an asynchronous inference request.
+        Use this to poll for completion after submitting an async request.
+      tags: [Inference]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Request status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestStatus'
+              example:
+                request_id: req_abc123
+                model_id: llama-3-8b
+                status: completed
+                created_at: "2025-03-27T12:00:00Z"
+                updated_at: "2025-03-27T12:00:05Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: cancelInference
+      summary: Cancel an inference request
+      description: Cancels a pending or running inference request.
+      tags: [Inference]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Request cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    type: string
+                    example: cancelled
+              example:
+                id: req_abc123
+                status: cancelled
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/inference/stats:
+    get:
+      operationId: getInferenceStats
+      summary: Inference executor statistics
+      description: |
+        Returns comprehensive statistics from the inference executor including
+        throughput, latency percentiles, token counts, and queue metrics.
+      tags: [Inference]
+      responses:
+        '200':
+          description: Executor statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutorStats'
+
+  # ---------------------------------------------------------------------------
+  # Model Management Endpoints
+  # ---------------------------------------------------------------------------
+
+  /api/v1/models:
+    get:
+      operationId: listModels
+      summary: List models
+      description: |
+        List all registered models with filtering, sorting, and pagination support.
+      tags: [Models]
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number (1-indexed)
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of items per page
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [registered, downloading, downloaded, validating, validated, active, inactive, error]
+          description: Filter by model status
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [gguf, onnx, pytorch, safetensors, tensorflow]
+          description: Filter by model format
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search term for model name or description
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            default: created_at
+            enum: [name, created_at, updated_at, status, format, version]
+          description: Sort field
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            default: DESC
+            enum: [ASC, DESC]
+          description: Sort direction
+      responses:
+        '200':
+          description: Paginated list of models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: registerModel
+      summary: Register a new model
+      description: |
+        Register a new model in the system. After registration, you can download,
+        validate, and activate the model for inference.
+      tags: [Models]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterModelRequest'
+            example:
+              name: llama-3-8b-instruct
+              version: 1.0.0
+              format: gguf
+              source_url: "https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/meta-llama-3-8b-instruct.Q4_K_M.gguf"
+              description: "Llama 3 8B Instruct - Quantized to Q4_K_M"
+              checksum: "abc123def456"
+      responses:
+        '201':
+          description: Model registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/models/search:
+    get:
+      operationId: searchModels
+      summary: Search models
+      description: Search models by name or description.
+      tags: [Models]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query string
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ModelInfo'
+                  query:
+                    type: string
+                  count:
+                    type: integer
+
+  /api/v1/models/stats:
+    get:
+      operationId: getModelStats
+      summary: Model statistics
+      description: Returns aggregate statistics for all registered models.
+      tags: [Models]
+      responses:
+        '200':
+          description: Model statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelStatsResponse'
+
+  /api/v1/models/{id}:
+    get:
+      operationId: getModel
+      summary: Get model details
+      description: Returns detailed information about a specific model.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      responses:
+        '200':
+          description: Model details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelInfo'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateModel
+      summary: Update model
+      description: Update a model's metadata, description, or configuration.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateModelRequest'
+      responses:
+        '200':
+          description: Updated model information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteModel
+      summary: Delete model
+      description: |
+        Remove a model from the system. Use `force=true` to delete an active model.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+        - name: force
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Force deletion even if model is active
+      responses:
+        '204':
+          description: Model deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/models/{id}/download:
+    post:
+      operationId: startDownload
+      summary: Start model download
+      description: |
+        Start downloading the model file from its source URL. Monitor progress
+        using the GET endpoint.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      responses:
+        '202':
+          description: Download started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Download started
+                  model_id:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      operationId: getDownloadProgress
+      summary: Get download progress
+      description: Returns the current download progress for a model.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      responses:
+        '200':
+          description: Download progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadProgress'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: cancelDownload
+      summary: Cancel model download
+      description: Cancel an in-progress model download.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      responses:
+        '200':
+          description: Download cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Download cancelled
+                  model_id:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/models/{id}/validate:
+    post:
+      operationId: validateModel
+      summary: Validate model
+      description: |
+        Validate a model's file integrity (checksum verification) and configuration.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      responses:
+        '200':
+          description: Validation completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Model validation completed
+                  model_id:
+                    type: string
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/models/{id}/activate:
+    post:
+      operationId: activateModel
+      summary: Activate model
+      description: |
+        Activate a model to make it available for inference. The model must be
+        in a validated state before activation.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      responses:
+        '200':
+          description: Model activated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Model activated successfully
+                  model_id:
+                    type: string
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/models/{id}/deactivate:
+    post:
+      operationId: deactivateModel
+      summary: Deactivate model
+      description: |
+        Deactivate a model, stopping it from serving inference requests. Active
+        inference requests will be allowed to complete.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      responses:
+        '200':
+          description: Model deactivated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Model deactivated successfully
+                  model_id:
+                    type: string
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/models/{id}/config:
+    get:
+      operationId: getModelConfig
+      summary: Get model configuration
+      description: Returns the runtime configuration for a specific model.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      responses:
+        '200':
+          description: Model configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelConfig'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateModelConfig
+      summary: Update model configuration
+      description: Update the runtime configuration for a specific model.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelConfig'
+      responses:
+        '200':
+          description: Updated configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelConfig'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/models/{id}/versions:
+    get:
+      operationId: listModelVersions
+      summary: List model versions
+      description: Returns all registered versions of a model.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      responses:
+        '200':
+          description: List of model versions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ModelInfo'
+                  count:
+                    type: integer
+                  model_id:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: createModelVersion
+      summary: Create model version
+      description: Register a new version of an existing model.
+      tags: [Models]
+      parameters:
+        - $ref: '#/components/parameters/ModelIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version:
+                  type: string
+                  description: Semantic version string
+                  example: "1.1.0"
+                source_url:
+                  type: string
+                  format: uri
+                  description: URL to download the model file
+                checksum:
+                  type: string
+                  description: Expected file checksum
+                changelog:
+                  type: string
+                  description: Description of changes in this version
+                created_by:
+                  type: string
+                  description: User who created this version
+      responses:
+        '501':
+          description: Not yet implemented
+
+# =============================================================================
+# Components
+# =============================================================================
+
+components:
+
+  # ---------------------------------------------------------------------------
+  # Security Schemes
+  # ---------------------------------------------------------------------------
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication. Pass your key in the X-API-Key header.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT Bearer token for authentication.
+
+  # ---------------------------------------------------------------------------
+  # Parameters
+  # ---------------------------------------------------------------------------
+
+  parameters:
+    ModelId:
+      name: model_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The unique identifier of the model
+      example: llama-3-8b
+
+    ModelIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The unique identifier of the model
+      example: model_abc123
+
+    RequestId:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The unique identifier of the inference request
+      example: req_abc123def456
+
+  # ---------------------------------------------------------------------------
+  # Responses
+  # ---------------------------------------------------------------------------
+
+  responses:
+    BadRequest:
+      description: Invalid request body or missing required parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: "model name is required"
+              type: invalid_request
+              code: "400"
+
+    Unauthorized:
+      description: Authentication failed or not provided
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: "authentication required"
+              type: authentication_error
+              code: "401"
+
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: "insufficient permissions: scope 'inference:execute' required"
+              type: authorization_error
+              code: "403"
+
+    NotFound:
+      description: The requested resource was not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: "model not found"
+              type: not_found
+              code: "404"
+
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds until the rate limit resets
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: "Rate limit exceeded. Maximum 1000 requests per minute."
+              type: rate_limit_error
+              code: "429"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              message: "inference failed: model loading error"
+              type: inference_error
+              code: "500"
+
+  # ---------------------------------------------------------------------------
+  # Schemas
+  # ---------------------------------------------------------------------------
+
+  schemas:
+
+    # ---- Error ----
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message]
+          properties:
+            message:
+              type: string
+              description: Human-readable error description
+            type:
+              type: string
+              description: Machine-readable error type
+              enum:
+                - invalid_request
+                - authentication_error
+                - authorization_error
+                - not_found
+                - rate_limit_error
+                - inference_error
+                - internal_error
+            code:
+              type: string
+              description: HTTP status code as string
+            details:
+              type: string
+              description: Additional error details (optional)
+
+    # ---- System ----
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        uptime:
+          type: string
+          description: Human-readable uptime (e.g., "2h30m15s")
+          example: 2h30m15s
+        version:
+          type: string
+          example: 1.0.0
+        checks:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ComponentCheck'
+
+    ComponentCheck:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        duration:
+          type: string
+          example: 0ms
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    ReadinessResponse:
+      type: object
+      properties:
+        ready:
+          type: boolean
+        timestamp:
+          type: string
+          format: date-time
+        reasons:
+          type: array
+          items:
+            type: string
+
+    VersionResponse:
+      type: object
+      properties:
+        version:
+          type: string
+          example: 1.0.0
+        build_time:
+          type: string
+          example: "2025-03-27T10:00:00Z"
+        git_commit:
+          type: string
+          example: abc1234
+        go_version:
+          type: string
+          example: go1.22.0
+        os:
+          type: string
+          example: linux
+        arch:
+          type: string
+          example: amd64
+
+    SystemInfoResponse:
+      type: object
+      properties:
+        version:
+          type: string
+        go:
+          type: object
+          properties:
+            version:
+              type: string
+            os:
+              type: string
+            arch:
+              type: string
+            max_procs:
+              type: integer
+            num_cpu:
+              type: integer
+        runtime:
+          type: object
+          properties:
+            goroutines:
+              type: integer
+            memory:
+              type: object
+              properties:
+                alloc:
+                  type: string
+                total_alloc:
+                  type: string
+                sys:
+                  type: string
+                heap_alloc:
+                  type: string
+                heap_sys:
+                  type: string
+                heap_in_use:
+                  type: string
+                heap_objects:
+                  type: string
+                stack_in_use:
+                  type: string
+            gc:
+              type: object
+              properties:
+                num_gc:
+                  type: integer
+                last_gc:
+                  type: string
+                pause_total:
+                  type: string
+                next_gc:
+                  type: string
+                gc_pause_percent:
+                  type: number
+            cgo_calls:
+              type: integer
+        host:
+          type: object
+          properties:
+            hostname:
+              type: string
+            os:
+              type: string
+            platform:
+              type: string
+        uptime:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        build:
+          type: object
+          properties:
+            version:
+              type: string
+            build_time:
+              type: string
+            git_commit:
+              type: string
+
+    DiagnosticsResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          $ref: '#/components/schemas/VersionResponse'
+        system:
+          $ref: '#/components/schemas/SystemInfoResponse'
+        health:
+          $ref: '#/components/schemas/HealthResponse'
+        config:
+          type: object
+          additionalProperties: true
+
+    MetricsResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        uptime:
+          type: string
+        requests:
+          type: object
+          properties:
+            active_requests:
+              type: integer
+            queued_requests:
+              type: integer
+        memory:
+          type: object
+          properties:
+            alloc_bytes:
+              type: integer
+              format: int64
+            sys_bytes:
+              type: integer
+              format: int64
+            heap_alloc_bytes:
+              type: integer
+              format: int64
+            heap_sys_bytes:
+              type: integer
+              format: int64
+            heap_in_use_bytes:
+              type: integer
+              format: int64
+            stack_in_use_bytes:
+              type: integer
+              format: int64
+            gc_count:
+              type: integer
+            goroutines:
+              type: integer
+              format: int64
+        runtime:
+          type: object
+          properties:
+            goroutines:
+              type: integer
+            num_cpu:
+              type: integer
+            max_procs:
+              type: integer
+            cgo_calls:
+              type: integer
+            uptime_sec:
+              type: integer
+              format: int64
+
+    # ---- Inference ----
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool, function]
+          description: The role of the message author
+        content:
+          type: string
+          description: The content of the message
+        name:
+          type: string
+          description: Optional name of the message author
+
+    InferenceRequest:
+      type: object
+      properties:
+        prompt:
+          type: string
+          description: |
+            Text prompt for completion. Use either `prompt` or `messages`, not both.
+          example: "Explain quantum computing in simple terms."
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+          description: |
+            Chat messages for conversation-style inference. Use either `messages`
+            or `prompt`, not both.
+        stream:
+          type: boolean
+          default: false
+          description: Whether to stream the response (only applicable to stream endpoint)
+        max_tokens:
+          type: integer
+          minimum: 1
+          maximum: 32768
+          default: 512
+          description: Maximum number of tokens to generate
+        temperature:
+          type: number
+          minimum: 0.0
+          maximum: 2.0
+          default: 0.7
+          description: |
+            Sampling temperature. Higher values (e.g., 0.8) make output more random,
+            lower values (e.g., 0.2) make it more focused and deterministic.
+        top_p:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          default: 0.9
+          description: Nucleus sampling threshold. Recommended to use temperature or top_p, not both.
+        top_k:
+          type: integer
+          minimum: 1
+          default: 40
+          description: Top-K sampling parameter
+        stop:
+          type: array
+          items:
+            type: string
+          description: |
+            Up to 4 sequences where the API will stop generating further tokens.
+            The returned text will not contain the stop sequence.
+          maxItems: 4
+          example: ["\n", "###"]
+        frequency_penalty:
+          type: number
+          minimum: -2.0
+          maximum: 2.0
+          default: 0.0
+          description: |
+            Penalize new tokens based on their existing frequency in the text so far.
+            Positive values decrease the model's likelihood to repeat the same line.
+        presence_penalty:
+          type: number
+          minimum: -2.0
+          maximum: 2.0
+          default: 0.0
+          description: |
+            Penalize new tokens based on whether they appear in the text so far.
+            Positive values increase the model's likelihood to talk about new topics.
+        user:
+          type: string
+          description: |
+            A unique identifier representing the end-user, which can help monitor
+            and detect abuse.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional metadata to attach to the request
+
+    InferenceResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique response identifier
+          example: resp_abc123
+        request_id:
+          type: string
+          description: Original request identifier
+          example: req_abc123
+        model_id:
+          type: string
+          description: Model used for inference
+          example: llama-3-8b
+        instance_id:
+          type: string
+          description: Instance that processed the request
+          example: inst_xyz789
+        content:
+          type: string
+          description: Generated text content
+          example: "Quantum computing is a type of computing that uses quantum-mechanical phenomena..."
+        finish_reason:
+          type: string
+          description: Reason for completion
+          enum: [stop, length, content_filter, tool_call]
+          example: stop
+        input_tokens:
+          type: integer
+          description: Number of tokens in the input
+          example: 24
+        output_tokens:
+          type: integer
+          description: Number of tokens in the output
+          example: 156
+        total_tokens:
+          type: integer
+          description: Total tokens (input + output)
+          example: 180
+        latency:
+          type: integer
+          description: Total latency in nanoseconds
+          example: 150000000
+        time_to_first_token:
+          type: integer
+          description: Time to first token in nanoseconds
+          example: 50000000
+        tokens_per_second:
+          type: number
+          description: Generation speed in tokens per second
+          example: 42.5
+        probabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/TokenProbability'
+        alternatives:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlternativeResponse'
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    TokenProbability:
+      type: object
+      properties:
+        token:
+          type: string
+        probability:
+          type: number
+        log_prob:
+          type: number
+
+    AlternativeResponse:
+      type: object
+      properties:
+        content:
+          type: string
+        probability:
+          type: number
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+
+    AsyncInferenceResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Request identifier for polling status
+          example: req_abc123def456
+        model_id:
+          type: string
+          example: llama-3-8b
+        status:
+          type: string
+          enum: [processing, queued, completed, failed]
+          example: processing
+        created_at:
+          type: string
+          format: date-time
+
+    RequestStatus:
+      type: object
+      properties:
+        RequestID:
+          type: string
+        ModelID:
+          type: string
+        Status:
+          type: string
+          enum: [queued, processing, completed, failed, cancelled]
+        Error:
+          type: string
+          nullable: true
+        CreatedAt:
+          type: string
+          format: date-time
+        UpdatedAt:
+          type: string
+          format: date-time
+
+    BatchInferenceRequest:
+      type: object
+      required: [model, requests]
+      properties:
+        model:
+          type: string
+          description: ID of the model to use for all requests in the batch
+          example: llama-3-8b
+        requests:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/InferenceRequest'
+          description: Array of inference requests (max 100)
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 15
+          default: 5
+          description: |
+            Batch priority level: 1=Low, 5=Normal, 10=High, 15=Critical
+          enum: [1, 5, 10, 15]
+        metadata:
+          type: object
+          additionalProperties: true
+
+    BatchInferenceResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        batch_id:
+          type: string
+        model_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, complete, partial, failed, cancelled]
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchResult'
+        total:
+          type: integer
+          example: 3
+        succeeded:
+          type: integer
+          example: 3
+        failed:
+          type: integer
+          example: 0
+        duration:
+          type: integer
+          description: Total duration in nanoseconds
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+
+    BatchResult:
+      type: object
+      properties:
+        index:
+          type: integer
+          description: 0-based index of this request in the original batch
+        request_id:
+          type: string
+        success:
+          type: boolean
+        response:
+          $ref: '#/components/schemas/InferenceResponse'
+        error:
+          $ref: '#/components/schemas/BatchError'
+        duration:
+          type: integer
+          description: Duration of this single request in nanoseconds
+
+    BatchError:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        type:
+          type: string
+
+    ExecutorStats:
+      type: object
+      properties:
+        TotalRequests:
+          type: integer
+          example: 15000
+        ActiveRequests:
+          type: integer
+          example: 5
+        QueuedRequests:
+          type: integer
+          example: 2
+        CompletedRequests:
+          type: integer
+          example: 14985
+        FailedRequests:
+          type: integer
+          example: 8
+        CancelledRequests:
+          type: integer
+          example: 3
+        AvgLatency:
+          type: integer
+          description: Average latency in nanoseconds
+        MaxLatency:
+          type: integer
+          description: Maximum latency in nanoseconds
+        MinLatency:
+          type: integer
+          description: Minimum latency in nanoseconds
+        TotalInputTokens:
+          type: integer
+          example: 1500000
+        TotalOutputTokens:
+          type: integer
+          example: 750000
+        RequestsPerSecond:
+          type: number
+          example: 42.5
+        LastRequestTime:
+          type: string
+          format: date-time
+        StartTime:
+          type: string
+          format: date-time
+        UpdatedAt:
+          type: string
+          format: date-time
+
+    # ---- Models ----
+
+    ModelInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          example: model_abc123
+        name:
+          type: string
+          example: llama-3-8b-instruct
+        version:
+          type: string
+          example: 1.0.0
+        format:
+          type: string
+          enum: [gguf, onnx, pytorch, safetensors, tensorflow]
+          example: gguf
+        status:
+          type: string
+          enum: [registered, downloading, downloaded, validating, validated, active, inactive, error, deleting]
+          example: active
+        size_bytes:
+          type: integer
+          format: int64
+          example: 4936589440
+        description:
+          type: string
+          example: "Llama 3 8B Instruct - Quantized to Q4_K_M"
+        source_url:
+          type: string
+          format: uri
+        checksum:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        config:
+          $ref: '#/components/schemas/ModelConfig'
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ModelConfig:
+      type: object
+      description: Model runtime configuration
+      properties:
+        context_length:
+          type: integer
+          example: 4096
+          description: Maximum context window length
+        max_tokens:
+          type: integer
+          example: 2048
+          description: Default max tokens for inference
+        temperature:
+          type: number
+          example: 0.7
+        top_p:
+          type: number
+          example: 0.9
+        top_k:
+          type: integer
+          example: 40
+        gpu_layers:
+          type: integer
+          example: 35
+          description: Number of layers to offload to GPU (-1 for all)
+        threads:
+          type: integer
+          example: 8
+          description: Number of CPU threads
+        batch_size:
+          type: integer
+          example: 512
+        seed:
+          type: integer
+          description: Random seed for reproducible outputs (0 = random)
+
+    RegisterModelRequest:
+      type: object
+      required: [name, version, format]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Model name (must be unique per version)
+          example: llama-3-8b-instruct
+        version:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Semantic version string
+          example: 1.0.0
+        format:
+          type: string
+          enum: [gguf, onnx, pytorch, safetensors, tensorflow]
+          description: Model file format
+          example: gguf
+        source_url:
+          type: string
+          format: uri
+          description: URL to download the model file from
+        description:
+          type: string
+          maxLength: 4096
+          description: Human-readable model description
+        checksum:
+          type: string
+          description: Expected SHA256 checksum for download validation
+        license:
+          type: string
+          description: License identifier (e.g., "MIT", "Apache-2.0", "LLAMA-3")
+        tags:
+          type: array
+          items:
+            type: string
+          description: Tags for categorization
+          example: ["instruct", "quantized", "Q4_K_M"]
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Additional model metadata
+
+    UpdateModelRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        source_url:
+          type: string
+          format: uri
+        checksum:
+          type: string
+        config:
+          $ref: '#/components/schemas/ModelConfig'
+        metadata:
+          type: object
+          additionalProperties: true
+        tags:
+          type: array
+          items:
+            type: string
+
+    ModelListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelInfo'
+        total:
+          type: integer
+          description: Total number of models matching the filter
+          example: 42
+        page:
+          type: integer
+          example: 1
+        per_page:
+          type: integer
+          example: 20
+        total_pages:
+          type: integer
+          example: 3
+
+    ModelStatsResponse:
+      type: object
+      properties:
+        total_models:
+          type: integer
+          example: 15
+        active_models:
+          type: integer
+          example: 8
+        inactive_models:
+          type: integer
+          example: 5
+        downloading_models:
+          type: integer
+          example: 1
+        error_models:
+          type: integer
+          example: 1
+        total_size_bytes:
+          type: integer
+          format: int64
+          example: 98731788800
+        by_format:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            gguf: 10
+            onnx: 3
+            pytorch: 2
+        by_status:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            active: 8
+            inactive: 5
+            downloading: 1
+            error: 1
+
+    DownloadProgress:
+      type: object
+      properties:
+        model_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, downloading, completed, failed, cancelled, paused]
+        progress_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+          example: 67.5
+        bytes_downloaded:
+          type: integer
+          format: int64
+          example: 3332594048
+        bytes_total:
+          type: integer
+          format: int64
+          example: 4936589440
+        speed_bytes_per_sec:
+          type: number
+          example: 52428800
+        eta_seconds:
+          type: number
+          example: 30.5
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        error:
+          type: string
+          nullable: true

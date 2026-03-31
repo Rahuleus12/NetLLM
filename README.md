@@ -1,17 +1,36 @@
 # Netllm
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.21%2B-00ADD8)](ai-provider/go.mod)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-v2.1-ff69b4.svg)](CODE_OF_CONDUCT.md)
+
 A network-accessible, containerized local AI provider platform that runs AI models with full management capabilities, API access, and enterprise-grade features.
 
 ## Overview
 
 Netllm provides a comprehensive solution for managing and serving AI models locally. It features a robust API gateway, model orchestration, containerized model runtime environments, and built-in monitoring, scaling, and security—making it ideal for organizations that need private, on-premises AI infrastructure.
 
+## Quick Links
+
+| Resource | Description |
+|----------|-------------|
+| [Contributing Guide](CONTRIBUTING.md) | How to contribute to Netllm |
+| [Code of Conduct](CODE_OF_CONDUCT.md) | Community standards (Contributor Covenant v2.1) |
+| [Security Policy](SECURITY.md) | How to report vulnerabilities |
+| [Changelog](CHANGELOG.md) | Release history and changes |
+| [Project Source](ai-provider/) | Main application source code |
+| [API Documentation](ai-provider/api/openapi.yaml) | OpenAPI 3.0 specification |
+| [Python SDK](ai-provider/sdk/python/netllm_client.py) | Python client library (zero dependencies) |
+| [JavaScript SDK](ai-provider/sdk/javascript/netllm-client.js) | JavaScript client library |
+| [Roadmap & Planning](Plan/) | Project roadmap and phase documentation |
+
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    API Gateway Layer                        │
-│  (REST API + WebSocket Streaming + Middleware Stack)        │
+│  (REST API + SSE Streaming + Auth + Middleware Stack)       │
 └────────────────────┬────────────────────────────────────────┘
                      │
 ┌────────────────────┴────────────────────────────────────────┐
@@ -104,6 +123,20 @@ Netllm provides a comprehensive solution for managing and serving AI models loca
 
 **Overall Progress**: 100% | **Lines of Code**: ~75,000 | **Version**: 2.0.0
 
+## Features
+
+- **Model Management** — Download, version, validate, activate/deactivate AI models (GGUF, ONNX, PyTorch)
+- **Inference API** — Synchronous, asynchronous, batch, and SSE streaming inference endpoints
+- **Authentication** — API Key and JWT Bearer token auth with RBAC, scopes, and rate limiting
+- **System Monitoring** — Health checks, Prometheus metrics, runtime diagnostics, and GC stats
+- **Multi-Tenancy** — Tenant isolation, quotas, organization and workspace management
+- **Plugin System** — Extensible architecture with sandboxed plugins and marketplace
+- **High Availability** — Failover, load balancing, rolling updates, multi-region support
+- **Enterprise Billing** — Subscription plans, Stripe integration, usage metering, and invoicing
+- **SDKs** — Python and JavaScript client libraries with zero external dependencies
+- **Deployment** — Docker, Docker Compose, Kubernetes manifests, and GitOps support
+- **CI/CD** — GitHub Actions workflows for testing, security scanning, and multi-platform releases
+
 ## Quick Start
 
 ### Prerequisites
@@ -165,6 +198,93 @@ Expected response:
   "status": "healthy",
   "version": "1.0.0",
   "uptime": "10s"
+}
+```
+
+## Project Structure
+
+```
+Netllm/
+├── .github/                    # GitHub Actions CI/CD + Issue/PR templates
+├── ai-provider/                # Main Go application
+│   ├── cmd/                    # Entry points (server, CLI)
+│   ├── internal/               # Internal packages (30+ modules)
+│   │   ├── api/handlers/       # HTTP handlers (models, inference, system, auth)
+│   │   ├── inference/          # Inference engine, scheduler, GPU, batch, cache
+│   │   ├── models/             # Model registry, download manager, versions
+│   │   ├── auth/               # JWT, API keys, OAuth2, MFA, sessions
+│   │   ├── authz/              # RBAC, ACL, policies, permissions
+│   │   ├── config/             # Configuration management (Viper)
+│   │   ├── storage/            # PostgreSQL database, Redis cache
+│   │   ├── monitoring/         # Health checks, Prometheus metrics
+│   │   ├── plugins/            # Plugin system, loader, marketplace, sandbox
+│   │   ├── tenant/             # Multi-tenancy, isolation, quotas
+│   │   ├── billing/            # Plans, invoices, Stripe integration
+│   │   └── ...                 # Analytics, audit, dashboard, HA, and more
+│   ├── pkg/                    # Public packages (container runtime, utils)
+│   ├── api/                    # OpenAPI 3.0 specification
+│   ├── sdk/                    # Client SDKs (Python, JavaScript, Go, Java)
+│   ├── deployments/            # Docker, Kubernetes, GitOps configs
+│   ├── configs/                # Configuration files
+│   ├── scripts/                # Setup and deployment scripts
+│   ├── docs/                   # API docs, deployment guides
+│   └── tests/                  # Unit and integration tests
+├── Plan/                       # Project roadmap and phase documentation
+├── LICENSE                     # MIT License
+├── CONTRIBUTING.md             # Contribution guidelines
+├── CODE_OF_CONDUCT.md          # Contributor Covenant v2.1
+├── SECURITY.md                 # Security policy
+├── CHANGELOG.md                # Release changelog
+└── README.md                   # This file
+```
+
+## SDKs
+
+### Python (zero dependencies)
+
+```python
+from netllm_client import NetllmClient
+
+client = NetllmClient(base_url="http://localhost:8080", api_key="your-key")
+
+# Text completion
+response = client.inference("llama-3-8b", prompt="Hello, world!")
+print(response.content)
+
+# Chat completion
+response = client.chat("llama-3-8b", messages=[
+    {"role": "user", "content": "What is AI?"},
+])
+
+# Streaming
+for chunk in client.inference_stream("llama-3-8b", prompt="Tell me a story"):
+    print(chunk.delta, end="", flush=True)
+
+# Batch inference
+result = client.batch_inference("llama-3-8b", prompts=["Hi", "Hello", "Hey"])
+```
+
+### JavaScript (Node.js 18+ / Browser)
+
+```javascript
+import { NetllmClient } from './netllm-client.js';
+
+const client = new NetllmClient({
+  baseUrl: 'http://localhost:8080',
+  apiKey: 'your-key',
+});
+
+// Text completion
+const response = await client.inference('llama-3-8b', {
+  prompt: 'Hello, world!',
+});
+console.log(response.content);
+
+// Streaming
+for await (const chunk of client.inferenceStream('llama-3-8b', {
+  prompt: 'Tell me a story',
+})) {
+  process.stdout.write(chunk.delta);
 }
 ```
 
