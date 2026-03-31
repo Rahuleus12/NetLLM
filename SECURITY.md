@@ -11,9 +11,7 @@ The following versions of Netllm are currently being supported with security upd
 | Version | Supported          | Status       |
 | ------- | ------------------ | ------------ |
 | 1.0.x   | :white_check_mark: | Active       |
-| 0.9.x   | :x:                | End of Life  |
-| 0.8.x   | :x:                | End of Life  |
-| < 0.8   | :x:                | Unsupported  |
+| < 1.0   | :x:                | Unsupported  |
 
 > **Note:** We strongly recommend upgrading to the latest supported version to ensure you receive the latest security patches and updates.
 
@@ -30,7 +28,6 @@ You may report a security vulnerability through any of the following channels:
 | Channel          | Contact Information                        |
 | ---------------- | ------------------------------------------ |
 | **Email**        | security@netllm.dev                        |
-| **GitHub**       | [Open a private security advisory](https://github.com/netllm/ai-provider/security/advisories/new) |
 | **GitHub Issues**| Create a issue with the `security` label   |
 
 > **Important:** Please do **not** publicly disclose unpatched vulnerabilities. Follow our responsible disclosure process outlined below.
